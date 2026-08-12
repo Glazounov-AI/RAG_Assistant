@@ -1,0 +1,11 @@
+Установка python
+winget install Python.Python.3.14
+
+Создание виртуального окружения 3.14
+py -3.14 -m venv venv_py314
+
+Запуск
+.\venv_py314\Scripts\activate   
+
+Установка зависимостей
+pip install -r .\requirements.txt

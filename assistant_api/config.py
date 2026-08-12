@@ -1,0 +1,33 @@
+"""Настройки RAG-ассистента (OpenAI API)."""
+
+from paths import PROJECT_DIR, DEFAULT_CACHE_DB_PATH, DEFAULT_CHROMADB_PATH
+
+# ChromaDB
+COLLECTION_NAME = "api_rag_collection"
+CHROMADB_PATH = DEFAULT_CHROMADB_PATH
+
+# Кэш
+CACHE_DB_PATH = DEFAULT_CACHE_DB_PATH
+
+# Документы
+DATA_FILE = PROJECT_DIR / "data" / "docs.txt"
+
+# LLM
+MODEL = "gpt-4o-mini"
+EMBEDDING_MODEL = "text-embedding-3-small"
+TEMPERATURE = 0.3
+MAX_TOKENS = 500
+
+# Поиск
+TOP_K = 3
+
+# Разбиение текста на чанки
+CHUNK_SIZE = 500        # целевой размер чанка (символы)
+CHUNK_OVERLAP = 100     # перекрытие между соседними чанками (символы)
+MIN_CHUNK_SIZE = 50     # минимальный размер чанка (символы)
+
+# Промпты
+SYSTEM_PROMPT = (
+    "Ты - полезный AI ассистент, который отвечает на вопросы "
+    "на основе предоставленного контекста."
+)
