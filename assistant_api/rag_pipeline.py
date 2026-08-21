@@ -18,7 +18,7 @@ class RAGPipeline:
     def __init__(self, 
                  collection_name: str = config.COLLECTION_NAME,
                  cache_db_path: str | None = None,
-                 data_file: str | None = None,
+                 data_dir: str | None = None,
                  model: str = config.MODEL):
         """
         Инициализация RAG pipeline.
@@ -26,7 +26,7 @@ class RAGPipeline:
         Args:
             collection_name: имя коллекции в ChromaDB
             cache_db_path: путь к базе данных кеша
-            data_file: путь к файлу с документами
+            data_dir: папка с документами для индексации
             model: модель OpenAI для генерации ответов
         """
         # Проверка API ключа
@@ -35,16 +35,16 @@ class RAGPipeline:
         
         self.model = model
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        data_file = str(data_file or config.DATA_FILE)
+        data_dir = str(data_dir or config.DATA_DIR)
         
         # Инициализация компонентов
         print("Инициализация векторного хранилища...")
         self.vector_store = VectorStore(collection_name=collection_name)
         
-        # Загрузка документов, если коллекция пустая
-        if self.vector_store.collection.count() == 0:
-            print(f"Загрузка документов из {data_file}...")
-            self.vector_store.load_documents(data_file)
+        print(f"Проверка новых документов в {data_dir}...")
+        added = self.vector_store.sync_data_directory(data_dir)
+        if added:
+            print(f"Индексировано новых файлов: {added}")
         
         print("Инициализация кеша...")
         self.cache = RAGCache(db_path=cache_db_path or config.CACHE_DB_PATH)

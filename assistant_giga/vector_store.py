@@ -201,54 +201,123 @@ class VectorStore:
         
         return chunks
     
-    def load_documents(self, file_path: str):
+    def _get_indexed_sources(self) -> set[str]:
+        """Имена файлов, уже присутствующие в коллекции."""
+        if self.collection.count() == 0:
+            return set()
+
+        result = self.collection.get(include=["metadatas"])
+        metadatas = result.get("metadatas") or []
+        sources = {meta["source"] for meta in metadatas if meta and "source" in meta}
+
+        # Совместимость с индексом без metadata (один файл docs.txt)
+        if not sources and self.collection.count() > 0:
+            sources.add("docs.txt")
+
+        return sources
+
+    def _list_data_files(self, data_dir: Path) -> List[Path]:
+        """Список файлов в папке data с поддерживаемыми расширениями."""
+        return sorted(
+            path for path in data_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in config.DATA_EXTENSIONS
+        )
+
+    def sync_data_directory(self, data_dir: str | Path) -> int:
         """
-        Загрузка документов из файла в векторное хранилище.
-        
+        Сканирует папку data и индексирует только новые файлы.
+
         Args:
-            file_path: путь к файлу с документами
+            data_dir: путь к папке с документами
+
+        Returns:
+            количество проиндексированных файлов
         """
-        # Проверка существования файла
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Файл {file_path} не найден")
-        
-        # Чтение файла
-        with open(file_path, 'r', encoding='utf-8') as f:
+        data_dir = Path(data_dir)
+        if not data_dir.is_dir():
+            raise FileNotFoundError(f"Папка {data_dir} не найдена")
+
+        indexed_sources = self._get_indexed_sources()
+        new_files = [
+            path for path in self._list_data_files(data_dir)
+            if path.name not in indexed_sources
+        ]
+
+        if not new_files:
+            print("Новых документов для индексации не найдено")
+            return 0
+
+        for file_path in new_files:
+            self._load_file(file_path)
+
+        return len(new_files)
+
+    def _load_file(self, file_path: Path) -> int:
+        """
+        Индексация одного файла в ChromaDB.
+
+        Args:
+            file_path: путь к файлу
+
+        Returns:
+            количество добавленных чанков
+        """
+        source = file_path.name
+        print(f"Индексация файла: {source}")
+
+        with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
-        
-        # Разбиение на чанки
+
         chunks = self._chunk_text(text)
+        if not chunks:
+            print(f"Файл {source}: нет чанков для индексации")
+            return 0
+
         print(f"Текст разбит на {len(chunks)} чанков")
-        
-        # Проверка, не загружены ли уже документы
-        if self.collection.count() > 0:
-            print("Документы уже загружены в коллекцию")
-            return
-        
-        # Создание embeddings и добавление в ChromaDB
+
         documents = []
         ids = []
         embeddings = []
-        
+        metadatas = []
+
         for i, chunk in enumerate(chunks):
-            # Создание embedding через OpenAI
             embedding = self._create_embedding(chunk)
-            
+
             documents.append(chunk)
-            ids.append(f"doc_{i}")
+            ids.append(f"{source}_{i}")
             embeddings.append(embedding)
-            
+            metadatas.append({"source": source})
+
             if (i + 1) % 10 == 0:
                 print(f"Обработано {i + 1}/{len(chunks)} чанков")
-        
-        # Добавление в ChromaDB батчами
+
         self.collection.add(
             documents=documents,
             embeddings=embeddings,
-            ids=ids
+            ids=ids,
+            metadatas=metadatas,
         )
-        
-        print(f"Загружено {len(chunks)} документов в коллекцию '{self.collection_name}'")
+
+        print(f"Файл {source}: добавлено {len(chunks)} чанков")
+        return len(chunks)
+
+    def load_documents(self, file_path: str):
+        """
+        Загрузка одного файла в векторное хранилище.
+
+        Args:
+            file_path: путь к файлу с документами
+        """
+        path = Path(file_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"Файл {file_path} не найден")
+
+        indexed = self._get_indexed_sources()
+        if path.name in indexed:
+            print(f"Файл {path.name} уже проиндексирован")
+            return
+
+        self._load_file(path)
     
     def _create_embedding(self, text: str) -> List[float]:
         """
@@ -280,17 +349,22 @@ class VectorStore:
         # Поиск в ChromaDB
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=top_k
+            n_results=top_k,
+            include=["documents", "distances", "metadatas"],
         )
         
         # Форматирование результатов
         documents = []
         if results['documents'] and len(results['documents']) > 0:
             for i in range(len(results['documents'][0])):
+                meta = None
+                if results.get('metadatas') and results['metadatas'][0]:
+                    meta = results['metadatas'][0][i]
                 documents.append({
                     'id': results['ids'][0][i],
                     'text': results['documents'][0][i],
-                    'distance': results['distances'][0][i] if 'distances' in results else None
+                    'distance': results['distances'][0][i] if 'distances' in results else None,
+                    'source': meta.get('source') if meta else None,
                 })
         
         return documents
@@ -319,9 +393,7 @@ if __name__ == "__main__":
     
     vector_store = VectorStore(collection_name="test_collection")
     
-    # Загрузка документов
-    if os.path.exists("data/docs.txt"):
-        vector_store.load_documents("data/docs.txt")
+    vector_store.sync_data_directory(config.DATA_DIR)
     
     # Поиск
     results = vector_store.search("Что такое машинное обучение?", top_k=3)

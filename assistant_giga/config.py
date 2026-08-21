@@ -9,8 +9,9 @@ CHROMADB_PATH = DEFAULT_CHROMADB_PATH
 # Кэш
 CACHE_DB_PATH = DEFAULT_CACHE_DB_PATH
 
-# Документы
-DATA_FILE = PROJECT_DIR / "data" / "docs.txt"
+# Документы для индексации (сканируется при каждом запуске)
+DATA_DIR = PROJECT_DIR / "data"
+DATA_EXTENSIONS = {".txt", ".md", ".markdown"}
 
 # LLM
 MODEL = "GigaChat"
