@@ -22,8 +22,8 @@ def print_banner():
     """Вывод приветственного баннера."""
     banner = """
 ╔══════════════════════════════════════════════════════════╗
-║         RAG Ассистент (API Mode)                        ║
-║  Retrieval-Augmented Generation через OpenAI API        ║
+║         RAG Ассистент (API Mode)                         ║
+║  Retrieval-Augmented Generation через OpenAI API         ║
 ╚══════════════════════════════════════════════════════════╝
     """
     print(banner)
