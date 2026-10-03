@@ -7,4 +7,5 @@ __pycache__/
 *.py[cod]
 
 **/db/cache/
+**/db/logs/
 **/db/chromadb/

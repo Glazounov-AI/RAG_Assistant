@@ -1,6 +1,6 @@
 """Настройки RAG-ассистента (OpenAI API)."""
 
-from paths import PROJECT_DIR, DEFAULT_CACHE_DB_PATH, DEFAULT_CHROMADB_PATH
+from paths import PROJECT_DIR, DEFAULT_CACHE_DB_PATH, DEFAULT_LOGS_DB_PATH, DEFAULT_CHROMADB_PATH
 
 # ChromaDB
 COLLECTION_NAME = "api_rag_collection"
@@ -8,6 +8,9 @@ CHROMADB_PATH = DEFAULT_CHROMADB_PATH
 
 # Кэш
 CACHE_DB_PATH = DEFAULT_CACHE_DB_PATH
+
+# Логи запросов
+LOGS_DB_PATH = DEFAULT_LOGS_DB_PATH
 
 # Документы для индексации (сканируется при каждом запуске)
 DATA_DIR = PROJECT_DIR / "data"

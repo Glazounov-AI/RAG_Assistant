@@ -4,9 +4,11 @@
 
 import sys
 import os
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from rag_pipeline import RAGPipeline
+from db_logger import QueryLogger
 
 # Загрузка переменных окружения из .env файла
 # Ищем .env в корне проекта (на уровень выше)
@@ -112,6 +114,11 @@ def main():
         # Инициализация RAG pipeline
         print("🚀 Инициализация системы...\n")
         pipeline = RAGPipeline()
+        try:
+            query_logger = QueryLogger()
+        except Exception as e:
+            print(f"⚠️  Не удалось инициализировать логирование запросов: {e}")
+            query_logger = None
         print("\n✅ Система готова к работе!\n")
         
     except Exception as e:
@@ -145,8 +152,24 @@ def main():
                 continue
             
             # Обработка запроса через RAG pipeline
+            started_at = time.perf_counter()
             result = pipeline.query(user_input)
-            
+            response_time_ms = (time.perf_counter() - started_at) * 1000
+
+            if query_logger is not None:
+                try:
+                    query_logger.log(
+                        source="console",
+                        user_id=None,
+                        username=None,
+                        query=result["query"],
+                        response=result["answer"],
+                        from_cache=result["from_cache"],
+                        response_time_ms=response_time_ms,
+                    )
+                except Exception as e:
+                    print(f"⚠️  Не удалось записать лог запроса: {e}")
+
             # Вывод результата
             print_response(result)
             
