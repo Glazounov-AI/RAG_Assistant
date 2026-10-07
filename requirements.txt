@@ -16,3 +16,7 @@ langchain-core>=0.3.55
 langchain-openai>=0.3.18
 langchain-community>=0.3.24
 ragas>=0.4.3
+
+# HTTP API (FastAPI)
+fastapi
+uvicorn[standard]

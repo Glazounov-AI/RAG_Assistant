@@ -1,9 +1,12 @@
 """Пути к локальным данным проекта (кэш, логи и ChromaDB)."""
 
+import os
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
-DB_DIR = PROJECT_DIR / "db"
+# Базовый каталог данных можно переопределить через переменную окружения
+# RAG_DB_DIR (например, для Railway persistent volume: RAG_DB_DIR=/data/db)
+DB_DIR = Path(os.getenv("RAG_DB_DIR", str(PROJECT_DIR / "db")))
 CACHE_DIR = DB_DIR / "cache"
 LOGS_DIR = DB_DIR / "logs"
 CHROMADB_DIR = DB_DIR / "chromadb"
