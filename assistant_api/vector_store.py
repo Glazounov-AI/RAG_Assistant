@@ -7,6 +7,8 @@ import chromadb
 from chromadb.config import Settings
 from typing import List, Dict, Any
 import os
+import hashlib
+import uuid
 from openai import OpenAI
 from dotenv import load_dotenv
 from pathlib import Path
@@ -115,9 +117,19 @@ class VectorStore:
         if current_chunk:
             chunks.append(current_chunk)
         
-        # Пост-обработка: фильтруем слишком короткие чанки
-        chunks = [chunk for chunk in chunks if len(chunk) >= config.MIN_CHUNK_SIZE]
-        
+        # Сохраняем исходные чанки до фильтрации.
+        original_chunks = chunks
+
+        # Пост-обработка: фильтруем слишком короткие чанки.
+        chunks = [
+            chunk for chunk in original_chunks
+            if len(chunk) >= config.MIN_CHUNK_SIZE
+        ]
+
+        # Не теряем содержимое небольшого документа целиком.
+        if not chunks and original_chunks:
+            chunks = original_chunks
+
         return chunks
     
     def _get_overlap_text(self, text: str, overlap_size: int | None = None) -> str:
@@ -261,6 +273,107 @@ class VectorStore:
             self._load_file(file_path)
 
         return len(new_files)
+
+    def get_portfolio_index_version(self) -> str:
+        """Возвращает версию по фактически сохранённым чанкам портфолио."""
+        if self.collection_name != "portfolio_kb":
+            raise ValueError("Метод предназначен только для portfolio_kb")
+
+        indexed = self.collection.get(include=["metadatas"])
+
+        entries = sorted(
+            (
+                chunk_id,
+                (metadata or {}).get("content_hash", ""),
+            )
+            for chunk_id, metadata in zip(
+                indexed["ids"],
+                indexed["metadatas"] or [],
+            )
+        )
+
+        signature = "\n".join(
+            f"{chunk_id}:{content_hash}"
+            for chunk_id, content_hash in entries
+        )
+
+        return hashlib.sha256(signature.encode("utf-8")).hexdigest()
+
+    def sync_portfolio_directory(self, data_dir: str | Path) -> int:
+        """Индексирует новые и изменённые документы портфолио."""
+        if self.collection_name != "portfolio_kb":
+            raise ValueError("Метод предназначен только для portfolio_kb")
+
+        data_dir = Path(data_dir)
+        if not data_dir.is_dir():
+            raise FileNotFoundError(f"Каталог не найден: {data_dir}")
+
+        updated = 0
+
+        for file_path in self._list_data_files(data_dir):
+            source = file_path.name
+            text = file_path.read_text(encoding="utf-8")
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+            existing = self.collection.get(
+                where={"source": source},
+                include=["metadatas"],
+            )
+            old_ids = existing["ids"]
+            old_metadatas = existing.get("metadatas") or []
+
+            if old_ids and all(
+                meta and meta.get("content_hash") == content_hash
+                for meta in old_metadatas
+            ):
+                continue
+
+            chunks = self._chunk_text(text)
+            if not chunks:
+                raise ValueError(f"Документ пуст после разбиения: {source}")
+
+            revision = uuid.uuid4().hex
+            new_ids = [f"{source}_{revision}_{i}" for i in range(len(chunks))]
+            embeddings = [self._create_embedding(chunk) for chunk in chunks]
+            metadatas = [
+                {
+                    "source": source,
+                    "content_hash": content_hash,
+                    "revision": revision,
+                }
+                for _ in chunks
+            ]
+
+            # Сначала записываем новую ревизию
+            try:
+                self.collection.add(
+                    ids=new_ids,
+                    documents=chunks,
+                    embeddings=embeddings,
+                    metadatas=metadatas,
+                )
+
+            except Exception:
+                # При частичной записи пытаемся удалить новые чанки.
+                # Старую ревизию не затрагиваем.
+                try:
+                    self.collection.delete(ids=new_ids)
+                except Exception as cleanup_error:
+                    print(
+                        f"ВНИМАНИЕ: не удалось очистить "
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
+
+                raise
+
+            # Только после успешной записи удаляем старую
+            if old_ids:
+                self.collection.delete(ids=old_ids)
+
+            updated += 1
+            print(f"Обновлён документ портфолио: {source}")
+
+        return updated
 
     def _load_file(self, file_path: Path) -> int:
         """

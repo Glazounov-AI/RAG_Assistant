@@ -73,7 +73,7 @@ class RAGPipeline:
         portfolio_data_dir = config.DATA_DIR / "portfolio"
 
         print(f"Проверка документов портфолио в {portfolio_data_dir}...")
-        portfolio_added = self.vector_stores["portfolio"].sync_data_directory(
+        portfolio_added = self.vector_stores["portfolio"].sync_portfolio_directory(
             portfolio_data_dir
         )
 
@@ -187,8 +187,12 @@ class RAGPipeline:
         if mode not in self.knowledge_bases:
             raise ValueError(f"Неизвестный режим работы: {mode}")
 
-        kb_version = self.knowledge_bases[mode]["version"]
         vector_store = self.vector_stores[mode]
+
+        if mode == "portfolio":
+            kb_version = vector_store.get_portfolio_index_version()
+        else:
+            kb_version = self.knowledge_bases[mode]["version"]
 
         # Шаг 1: Проверка кеша
         if use_cache:
