@@ -19,6 +19,7 @@ class QueryRequest(BaseModel):
     """Тело запроса POST /query."""
 
     query: str = Field(..., min_length=1)
+    mode: str = Field(default="support")
 
     @field_validator("query")
     @classmethod
@@ -79,9 +80,14 @@ def query(request: QueryRequest):
     # Замер только выполнения pipeline.query()
     started_at = time.perf_counter()
     try:
-        result = pipeline.query(request.query)
+        result = pipeline.query(request.query, mode=request.mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception:
-        raise HTTPException(status_code=500, detail="Ошибка обработки запроса")
+        raise HTTPException(
+            status_code=500,
+            detail="Ошибка обработки запроса",
+        )
     response_time_ms = (time.perf_counter() - started_at) * 1000
 
     # Логирование: ошибка логгера не влияет на HTTP-ответ
