@@ -223,3 +223,178 @@ def test_portfolio_partial_write_failure_preserves_old_version(
     assert set(after["ids"]) == set(before["ids"])
     assert after["documents"] == before["documents"]
     assert after["metadatas"] == before["metadatas"]
+
+def test_portfolio_incomplete_revision_recovery(tmp_path):
+    data_dir = tmp_path / "portfolio"
+    data_dir.mkdir()
+
+    document = data_dir / "project.md"
+    document.write_text("Первая версия проекта.", encoding="utf-8")
+
+    collection = chromadb.PersistentClient(
+        path=str(tmp_path / "chromadb")
+    ).get_or_create_collection("portfolio_kb")
+
+    store = object.__new__(VectorStore)
+    store.collection_name = "portfolio_kb"
+    store.collection = collection
+
+    embedding_calls = []
+
+    def fake_embedding(text):
+        embedding_calls.append(text)
+        return [float(len(text)), 1.0, 0.5]
+
+    store._create_embedding = fake_embedding
+
+    # Индексируем исходный документ.
+    assert store.sync_portfolio_directory(data_dir) == 1
+
+    # Изменяем исходный файл.
+    new_content = "Вторая версия проекта."
+    document.write_text(new_content, encoding="utf-8")
+
+    # Имитируем незавершённую запись новой ревизии:
+    # сохранён один чанк, хотя ожидалось два.
+    collection.add(
+        ids=["project.md_incomplete_0"],
+        documents=[new_content],
+        embeddings=[[float(len(new_content)), 1.0, 0.5]],
+        metadatas=[{
+            "source": "project.md",
+            "content_hash": hashlib.sha256(
+                new_content.encode("utf-8")
+            ).hexdigest(),
+            "revision": "incomplete",
+            "chunk_count": 2,
+        }],
+    )
+
+    calls_before = len(embedding_calls)
+
+    # Неполная ревизия не должна приниматься за готовую.
+    assert store.sync_portfolio_directory(data_dir) == 1
+
+    # Должна произойти повторная генерация embeddings.
+    assert len(embedding_calls) > calls_before
+
+    after = collection.get(include=["documents", "metadatas"])
+
+    assert after["documents"] == [new_content]
+    assert len(after["ids"]) == 1
+    assert after["metadatas"][0]["chunk_count"] == 1
+
+def test_portfolio_complete_revision_recovery(tmp_path):
+    data_dir = tmp_path / "portfolio"
+    data_dir.mkdir()
+
+    document = data_dir / "project.md"
+    old_content = "Первая версия проекта."
+    new_content = "Вторая версия проекта."
+
+    document.write_text(old_content, encoding="utf-8")
+
+    collection = chromadb.PersistentClient(
+        path=str(tmp_path / "chromadb")
+    ).get_or_create_collection("portfolio_kb")
+
+    store = object.__new__(VectorStore)
+    store.collection_name = "portfolio_kb"
+    store.collection = collection
+    store._create_embedding = lambda text: [float(len(text)), 1.0, 0.5]
+
+    # Индексируем старую версию.
+    assert store.sync_portfolio_directory(data_dir) == 1
+
+    old_ids = set(collection.get()["ids"])
+
+    # Изменяем исходный документ.
+    document.write_text(new_content, encoding="utf-8")
+
+    # Имитируем полную запись новой ревизии,
+    # после которой приложение аварийно завершилось.
+    collection.add(
+        ids=["project.md_recovered_0"],
+        documents=[new_content],
+        embeddings=[[float(len(new_content)), 1.0, 0.5]],
+        metadatas=[{
+            "source": "project.md",
+            "content_hash": hashlib.sha256(
+                new_content.encode("utf-8")
+            ).hexdigest(),
+            "revision": "recovered",
+            "chunk_count": 1,
+        }],
+    )
+
+    # При восстановлении embeddings создаваться не должны.
+    def unexpected_embedding(text):
+        raise AssertionError("Повторная генерация embeddings")
+
+    store._create_embedding = unexpected_embedding
+
+    assert store.sync_portfolio_directory(data_dir) == 0
+
+    after = collection.get(include=["documents", "metadatas"])
+
+    assert after["ids"] == ["project.md_recovered_0"]
+    assert after["documents"] == [new_content]
+    assert old_ids.isdisjoint(set(after["ids"]))
+
+def test_portfolio_invalid_chunk_ids_recovery(tmp_path):
+    data_dir = tmp_path / "portfolio"
+    data_dir.mkdir()
+
+    document = data_dir / "project.md"
+    old_content = "Первая версия проекта."
+    new_content = "Вторая версия проекта."
+
+    document.write_text(old_content, encoding="utf-8")
+
+    collection = chromadb.PersistentClient(
+        path=str(tmp_path / "chromadb")
+    ).get_or_create_collection("portfolio_kb")
+
+    store = object.__new__(VectorStore)
+    store.collection_name = "portfolio_kb"
+    store.collection = collection
+
+    embedding_calls = []
+
+    def fake_embedding(text):
+        embedding_calls.append(text)
+        return [float(len(text)), 1.0, 0.5]
+
+    store._create_embedding = fake_embedding
+
+    assert store.sync_portfolio_directory(data_dir) == 1
+
+    document.write_text(new_content, encoding="utf-8")
+
+    # Количество чанков правильное, но индекс неправильный.
+    collection.add(
+        ids=["project.md_invalid_99"],
+        documents=[new_content],
+        embeddings=[[float(len(new_content)), 1.0, 0.5]],
+        metadatas=[{
+            "source": "project.md",
+            "content_hash": hashlib.sha256(
+                new_content.encode("utf-8")
+            ).hexdigest(),
+            "revision": "invalid",
+            "chunk_count": 1,
+        }],
+    )
+
+    calls_before = len(embedding_calls)
+
+    # Неверная ревизия должна быть отвергнута.
+    assert store.sync_portfolio_directory(data_dir) == 1
+    assert len(embedding_calls) > calls_before
+
+    after = collection.get(include=["documents", "metadatas"])
+
+    assert len(after["ids"]) == 1
+    assert after["documents"] == [new_content]
+    assert after["ids"][0].endswith("_0")
+    assert after["ids"][0] != "project.md_invalid_99"

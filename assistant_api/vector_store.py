@@ -322,10 +322,74 @@ class VectorStore:
             old_ids = existing["ids"]
             old_metadatas = existing.get("metadatas") or []
 
-            if old_ids and all(
-                meta and meta.get("content_hash") == content_hash
-                for meta in old_metadatas
-            ):
+            # Группируем проиндексированные чанки по ревизиям.
+            revisions = {}
+
+            for chunk_id, metadata in zip(old_ids, old_metadatas):
+                if not metadata:
+                    continue
+
+                revision = metadata.get("revision")
+                indexed_hash = metadata.get("content_hash")
+
+                if revision and indexed_hash:
+                    revisions.setdefault(
+                        (revision, indexed_hash), []
+                    ).append(chunk_id)
+
+            # Ищем ревизию, соответствующую текущему содержимому файла.
+            matching_revisions = []
+
+            for (revision, indexed_hash), ids in revisions.items():
+                if indexed_hash != content_hash:
+                    continue
+
+                revision_metadatas = [
+                    metadata
+                    for metadata in old_metadatas
+                    if metadata
+                    and metadata.get("revision") == revision
+                    and metadata.get("content_hash") == indexed_hash
+                ]
+
+                expected_counts = {
+                    metadata.get("chunk_count")
+                    for metadata in revision_metadatas
+                }
+
+                # Ревизия считается полной, только если все её чанки
+                # имеют одинаковое ожидаемое количество.
+                if len(expected_counts) != 1:
+                    continue
+
+                expected_count = next(iter(expected_counts))
+
+                if type(expected_count) is not int or expected_count <= 0:
+                    continue
+
+                expected_ids = {
+                    f"{source}_{revision}_{i}"
+                    for i in range(expected_count)
+                }
+
+                if set(ids) == expected_ids:
+                    matching_revisions.append((revision, ids))
+
+            if matching_revisions:
+                # При наличии нескольких совпадений сохраняем одно.
+                matching_revisions.sort(key=lambda item: item[0])
+                keep_revision, keep_ids = matching_revisions[-1]
+
+                redundant_ids = [
+                    chunk_id
+                    for chunk_id in old_ids
+                    if chunk_id not in set(keep_ids)
+                ]
+
+                if redundant_ids:
+                    self.collection.delete(ids=redundant_ids)
+                    print(f"Удалены лишние ревизии документа: {source}")
+
                 continue
 
             chunks = self._chunk_text(text)
@@ -340,6 +404,7 @@ class VectorStore:
                     "source": source,
                     "content_hash": content_hash,
                     "revision": revision,
+                    "chunk_count": len(chunks),
                 }
                 for _ in chunks
             ]
