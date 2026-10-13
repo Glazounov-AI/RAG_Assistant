@@ -36,16 +36,50 @@ class RAGPipeline:
         self.model = model
         self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         data_dir = str(data_dir or config.DATA_DIR)
+
+        # Настройки режимов и коллекций
+        self.default_mode = config.DEFAULT_MODE
+        self.knowledge_bases = config.KNOWLEDGE_BASES
         
-        # Инициализация компонентов
-        print("Инициализация векторного хранилища...")
+        if collection_name != self.knowledge_bases[self.default_mode]["collection"]:
+            raise ValueError(
+                f"Коллекция {collection_name!r} не соответствует "
+                f"режиму {self.default_mode!r}"
+            )
+
+        # Инициализация векторных хранилищ
+        print("Инициализация векторных хранилищ...")
+
         self.vector_store = VectorStore(collection_name=collection_name)
-        
+
+        self.vector_stores = {
+            self.default_mode: self.vector_store,
+        }
+
+        for mode, settings in self.knowledge_bases.items():
+            if mode == self.default_mode:
+                continue
+
+            self.vector_stores[mode] = VectorStore(
+                collection_name=settings["collection"]
+            )
+
         print(f"Проверка новых документов в {data_dir}...")
         added = self.vector_store.sync_data_directory(data_dir)
         if added:
             print(f"Индексировано новых файлов: {added}")
         
+        # Индексация отдельной базы знаний портфолио
+        portfolio_data_dir = config.DATA_DIR / "portfolio"
+
+        print(f"Проверка документов портфолио в {portfolio_data_dir}...")
+        portfolio_added = self.vector_stores["portfolio"].sync_data_directory(
+            portfolio_data_dir
+        )
+
+        if portfolio_added:
+            print(f"Индексировано файлов портфолио: {portfolio_added}")
+
         print("Инициализация кеша...")
         self.cache = RAGCache(db_path=cache_db_path or config.CACHE_DB_PATH)
         
@@ -81,13 +115,17 @@ class RAGPipeline:
 - Отвечай только на основе предоставленного контекста
 - Если в контексте нет информации для ответа, скажи об этом
 - Будь точным и кратким
-- Отвечай на русском языке
+- Отвечай на языке вопроса пользователя
 
 Ответ:"""
         
         return prompt
     
-    def _generate_answer(self, prompt: str) -> str:
+    def _generate_answer(
+        self,
+        prompt: str,
+        mode: str = config.DEFAULT_MODE,
+    ) -> str:
         """
         Генерация ответа через OpenAI API.
         
@@ -97,10 +135,17 @@ class RAGPipeline:
         Returns:
             сгенерированный ответ
         """
+
+        system_prompt = (
+            config.PORTFOLIO_SYSTEM_PROMPT
+            if mode == "portfolio"
+            else config.SYSTEM_PROMPT
+        )
+
         response = self.openai_client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": config.SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
             temperature=config.TEMPERATURE,
@@ -109,7 +154,12 @@ class RAGPipeline:
         
         return response.choices[0].message.content.strip()
     
-    def query(self, user_query: str, use_cache: bool = True) -> Dict[str, Any]:
+    def query(
+        self,
+        user_query: str,
+        use_cache: bool = True,
+        mode: str | None = None,
+    ) -> Dict[str, Any]:
         """
         Основной метод для обработки запроса пользователя через API.
         
@@ -131,10 +181,23 @@ class RAGPipeline:
         print(f"Запрос: {user_query}")
         print(f"{'='*60}")
         
+        # Определяем режим и соответствующую базу знаний
+        mode = mode or self.default_mode
+
+        if mode not in self.knowledge_bases:
+            raise ValueError(f"Неизвестный режим работы: {mode}")
+
+        kb_version = self.knowledge_bases[mode]["version"]
+        vector_store = self.vector_stores[mode]
+
         # Шаг 1: Проверка кеша
         if use_cache:
             print("[*] Проверка кеша...")
-            cached_result = self.cache.get(user_query)
+            cached_result = self.cache.get(
+                user_query,
+                mode=mode,
+                kb_version=kb_version,
+            )
             
             if cached_result:
                 print("[+] Ответ найден в кеше")
@@ -150,7 +213,7 @@ class RAGPipeline:
         
         # Шаг 2: Поиск релевантных документов
         print("[*] Поиск релевантных документов через API...")
-        context_docs = self.vector_store.search(user_query, top_k=config.TOP_K)
+        context_docs = vector_store.search(user_query, top_k=config.TOP_K)
         print(f"[+] Найдено {len(context_docs)} релевантных документов")
         
         # Шаг 3: Формирование промпта
@@ -159,14 +222,20 @@ class RAGPipeline:
         
         # Шаг 4: Генерация ответа через API
         print(f"[*] Генерация ответа через OpenAI API ({self.model})...")
-        answer = self._generate_answer(prompt)
+        answer = self._generate_answer(prompt, mode=mode)
         print("[+] Ответ получен от API")
         
         # Шаг 5: Сохранение в кеш
         if use_cache:
             print("[*] Сохранение в кеш...")
             context_for_cache = [doc['text'] for doc in context_docs]
-            self.cache.set(user_query, answer, context_for_cache)
+            self.cache.set(
+                user_query,
+                answer,
+                context_for_cache,
+                mode=mode,
+                kb_version=kb_version,
+            )
             print("[+] Сохранено в кеш")
         
         return {
