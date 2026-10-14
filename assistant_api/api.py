@@ -8,8 +8,10 @@
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from fastapi import FastAPI, HTTPException, Request
+from config import KNOWLEDGE_BASES, DEFAULT_MODE, RATE_LIMIT_ENABLED
+from rate_limiter import RateLimiter
 
 from rag_pipeline import RAGPipeline
 from db_logger import QueryLogger
@@ -19,7 +21,7 @@ class QueryRequest(BaseModel):
     """Тело запроса POST /query."""
 
     query: str = Field(..., min_length=1)
-    mode: str = Field(default="support")
+    mode: str = Field(default=DEFAULT_MODE)
 
     @field_validator("query")
     @classmethod
@@ -30,6 +32,22 @@ class QueryRequest(BaseModel):
             raise ValueError("query не должна быть пустой")
         return stripped
 
+    @model_validator(mode="after")
+    def validate_request(self):
+        mode_config = KNOWLEDGE_BASES.get(self.mode)
+
+        if mode_config is None:
+            raise ValueError("Неизвестный режим")
+
+        max_length = mode_config["max_query_length"]
+
+        if len(self.query) > max_length:
+            raise ValueError(
+                f"Максимальная длина запроса для режима "
+                f"'{self.mode}' — {max_length} символов"
+            )
+
+        return self
 
 class QueryResponse(BaseModel):
     """Ответ на успешный POST /query."""
@@ -47,6 +65,7 @@ async def lifespan(app: FastAPI):
 
     # Тяжёлая инициализация ( ChromaDB, кеш, индексация ) — один раз
     app.state.pipeline = RAGPipeline()
+    app.state.rate_limiter = RateLimiter() if RATE_LIMIT_ENABLED else None
 
     # Логгер создаётся один раз; ошибка не останавливает API
     try:
@@ -72,22 +91,38 @@ def health():
 
 
 @app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest):
+def query(request: QueryRequest, http_request: Request):
     """Обработка вопроса через существующий RAGPipeline."""
     pipeline: RAGPipeline = app.state.pipeline
     logger: QueryLogger | None = app.state.logger
+
+    limiter = app.state.rate_limiter
+
+    if limiter is not None:
+        client_key = (
+            http_request.client.host
+            if http_request.client is not None
+            else "unknown"
+        )
+
+        limit = KNOWLEDGE_BASES[request.mode]["rate_limit_per_minute"]
+
+        if not limiter.check(client_key, request.mode, limit):
+            raise HTTPException(
+                status_code=429,
+                detail="Превышен лимит запросов. Повторите попытку позже.",
+            )
 
     # Замер только выполнения pipeline.query()
     started_at = time.perf_counter()
     try:
         result = pipeline.query(request.query, mode=request.mode)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception:
         raise HTTPException(
             status_code=500,
             detail="Ошибка обработки запроса",
-        )
+        ) from None
+
     response_time_ms = (time.perf_counter() - started_at) * 1000
 
     # Логирование: ошибка логгера не влияет на HTTP-ответ

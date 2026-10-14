@@ -1,5 +1,7 @@
 """Настройки RAG-ассистента (OpenAI API)."""
 
+import os
+
 from paths import PROJECT_DIR, DEFAULT_CACHE_DB_PATH, DEFAULT_LOGS_DB_PATH, DEFAULT_CHROMADB_PATH
 
 # ChromaDB
@@ -11,12 +13,22 @@ KNOWLEDGE_BASES = {
     "support": {
         "collection": COLLECTION_NAME,
         "version": "v1",
+        "max_query_length": 2000,
+        "rate_limit_per_minute": 10,
     },
     "portfolio": {
         "collection": "portfolio_kb",
         "version": "v1",
+        "max_query_length": 8000,
+        "rate_limit_per_minute": 5,
     },
 }
+
+# Глобальное включение/отключение ограничения частоты запросов
+RATE_LIMIT_ENABLED = (
+    os.getenv("RAG_RATE_LIMIT_ENABLED", "true").lower()
+    in {"true", "1", "yes", "on"}
+)
 
 PORTFOLIO_SYSTEM_PROMPT = """
 Ты — AI-ассистент сайта Glazounov AI Lab.
