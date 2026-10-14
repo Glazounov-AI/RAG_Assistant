@@ -30,6 +30,14 @@ RATE_LIMIT_ENABLED = (
     in {"true", "1", "yes", "on"}
 )
 
+# Авторизация HTTP API
+API_AUTH_ENABLED = (
+    os.getenv("RAG_API_AUTH_ENABLED", "false").lower()
+    in {"true", "1", "yes", "on"}
+)
+
+API_ACCESS_KEY = os.getenv("RAG_API_ACCESS_KEY", "")
+
 PORTFOLIO_SYSTEM_PROMPT = """
 Ты — AI-ассистент сайта Glazounov AI Lab.
 

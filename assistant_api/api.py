@@ -5,12 +5,19 @@
 Запуск: uvicorn api:app --host 127.0.0.1 --port 8000
 """
 
+import secrets
 import time
 from contextlib import asynccontextmanager
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from fastapi import FastAPI, HTTPException, Request
-from config import KNOWLEDGE_BASES, DEFAULT_MODE, RATE_LIMIT_ENABLED
+from config import (
+    KNOWLEDGE_BASES,
+    DEFAULT_MODE,
+    RATE_LIMIT_ENABLED,
+    API_AUTH_ENABLED,
+    API_ACCESS_KEY,
+)
 from rate_limiter import RateLimiter
 
 from rag_pipeline import RAGPipeline
@@ -63,6 +70,11 @@ async def lifespan(app: FastAPI):
     """Однократная инициализация RAG pipeline и логгера при старте."""
     print("🚀 Инициализация HTTP API...")
 
+    if API_AUTH_ENABLED and not API_ACCESS_KEY:
+        raise RuntimeError(
+            "RAG_API_ACCESS_KEY must be configured when API authentication is enabled"
+        )
+
     # Тяжёлая инициализация ( ChromaDB, кеш, индексация ) — один раз
     app.state.pipeline = RAGPipeline()
     app.state.rate_limiter = RateLimiter() if RATE_LIMIT_ENABLED else None
@@ -93,6 +105,15 @@ def health():
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest, http_request: Request):
     """Обработка вопроса через существующий RAGPipeline."""
+    if API_AUTH_ENABLED:
+        provided_key = http_request.headers.get("X-API-Key", "")
+
+        if not secrets.compare_digest(provided_key, API_ACCESS_KEY):
+            raise HTTPException(
+                status_code=401,
+                detail="Неверный или отсутствующий API-ключ",
+            )
+
     pipeline: RAGPipeline = app.state.pipeline
     logger: QueryLogger | None = app.state.logger
 
