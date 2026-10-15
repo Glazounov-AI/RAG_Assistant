@@ -245,39 +245,19 @@ class VectorStore:
             if path.is_file() and path.suffix.lower() in config.DATA_EXTENSIONS
         )
 
-    def sync_data_directory(self, data_dir: str | Path) -> int:
-        """
-        Сканирует папку data и индексирует только новые файлы.
+    @staticmethod
+    def _index_config_hash() -> str:
+        """SHA-256 параметров построения векторного индекса."""
+        settings = (
+            config.EMBEDDING_MODEL,
+            config.CHUNK_SIZE,
+            config.CHUNK_OVERLAP,
+            config.MIN_CHUNK_SIZE,
+        )
+        return hashlib.sha256(repr(settings).encode("utf-8")).hexdigest()
 
-        Args:
-            data_dir: путь к папке с документами
-
-        Returns:
-            количество проиндексированных файлов
-        """
-        data_dir = Path(data_dir)
-        if not data_dir.is_dir():
-            raise FileNotFoundError(f"Папка {data_dir} не найдена")
-
-        indexed_sources = self._get_indexed_sources()
-        new_files = [
-            path for path in self._list_data_files(data_dir)
-            if path.name not in indexed_sources
-        ]
-
-        if not new_files:
-            print("Новых документов для индексации не найдено")
-            return 0
-
-        for file_path in new_files:
-            self._load_file(file_path)
-
-        return len(new_files)
-
-    def get_portfolio_index_version(self) -> str:
+    def get_index_version(self) -> str:
         """Возвращает версию по фактически сохранённым чанкам портфолио."""
-        if self.collection_name != "portfolio_kb":
-            raise ValueError("Метод предназначен только для portfolio_kb")
 
         indexed = self.collection.get(include=["metadatas"])
 
@@ -285,6 +265,7 @@ class VectorStore:
             (
                 chunk_id,
                 (metadata or {}).get("content_hash", ""),
+                (metadata or {}).get("config_hash", ""),
             )
             for chunk_id, metadata in zip(
                 indexed["ids"],
@@ -293,22 +274,21 @@ class VectorStore:
         )
 
         signature = "\n".join(
-            f"{chunk_id}:{content_hash}"
-            for chunk_id, content_hash in entries
+            f"{chunk_id}:{content_hash}:{config_hash}"
+            for chunk_id, content_hash, config_hash in entries
         )
 
         return hashlib.sha256(signature.encode("utf-8")).hexdigest()
 
-    def sync_portfolio_directory(self, data_dir: str | Path) -> int:
+    def sync_data_directory(self, data_dir: str | Path) -> int:
         """Индексирует новые и изменённые документы портфолио."""
-        if self.collection_name != "portfolio_kb":
-            raise ValueError("Метод предназначен только для portfolio_kb")
 
         data_dir = Path(data_dir)
         if not data_dir.is_dir():
             raise FileNotFoundError(f"Каталог не найден: {data_dir}")
 
         updated = 0
+        config_hash = self._index_config_hash()
 
         for file_path in self._list_data_files(data_dir):
             source = file_path.name
@@ -331,8 +311,9 @@ class VectorStore:
 
                 revision = metadata.get("revision")
                 indexed_hash = metadata.get("content_hash")
+                indexed_config = metadata.get("config_hash")
 
-                if revision and indexed_hash:
+                if revision and indexed_hash and indexed_config == config_hash:
                     revisions.setdefault(
                         (revision, indexed_hash), []
                     ).append(chunk_id)
@@ -403,6 +384,7 @@ class VectorStore:
                 {
                     "source": source,
                     "content_hash": content_hash,
+                    "config_hash": config_hash,
                     "revision": revision,
                     "chunk_count": len(chunks),
                 }
@@ -438,75 +420,23 @@ class VectorStore:
             updated += 1
             print(f"Обновлён документ портфолио: {source}")
 
+        # Удаляем документы, которых больше нет в исходном каталоге.
+        current_sources = {
+            path.name for path in self._list_data_files(data_dir)
+        }
+        indexed_sources = self._get_indexed_sources()
+
+        if not current_sources and indexed_sources:
+            raise RuntimeError(
+                f"Каталог {data_dir} пуст. Удаление всей KB заблокировано."
+            )
+
+        for source in indexed_sources - current_sources:
+            self.collection.delete(where={"source": source})
+            print(f"Удалён из индекса: {source}")
+
         return updated
 
-    def _load_file(self, file_path: Path) -> int:
-        """
-        Индексация одного файла в ChromaDB.
-
-        Args:
-            file_path: путь к файлу
-
-        Returns:
-            количество добавленных чанков
-        """
-        source = file_path.name
-        print(f"Индексация файла: {source}")
-
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        chunks = self._chunk_text(text)
-        if not chunks:
-            print(f"Файл {source}: нет чанков для индексации")
-            return 0
-
-        print(f"Текст разбит на {len(chunks)} чанков")
-
-        documents = []
-        ids = []
-        embeddings = []
-        metadatas = []
-
-        for i, chunk in enumerate(chunks):
-            embedding = self._create_embedding(chunk)
-
-            documents.append(chunk)
-            ids.append(f"{source}_{i}")
-            embeddings.append(embedding)
-            metadatas.append({"source": source})
-
-            if (i + 1) % 10 == 0:
-                print(f"Обработано {i + 1}/{len(chunks)} чанков")
-
-        self.collection.add(
-            documents=documents,
-            embeddings=embeddings,
-            ids=ids,
-            metadatas=metadatas,
-        )
-
-        print(f"Файл {source}: добавлено {len(chunks)} чанков")
-        return len(chunks)
-
-    def load_documents(self, file_path: str):
-        """
-        Загрузка одного файла в векторное хранилище.
-
-        Args:
-            file_path: путь к файлу с документами
-        """
-        path = Path(file_path)
-        if not path.is_file():
-            raise FileNotFoundError(f"Файл {file_path} не найден")
-
-        indexed = self._get_indexed_sources()
-        if path.name in indexed:
-            print(f"Файл {path.name} уже проиндексирован")
-            return
-
-        self._load_file(path)
-    
     def _create_embedding(self, text: str) -> List[float]:
         """
         Создание векторного представления текста через OpenAI.

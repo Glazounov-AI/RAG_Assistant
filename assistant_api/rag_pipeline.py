@@ -64,21 +64,11 @@ class RAGPipeline:
                 collection_name=settings["collection"]
             )
 
-        print(f"Проверка новых документов в {data_dir}...")
-        added = self.vector_store.sync_data_directory(data_dir)
-        if added:
-            print(f"Индексировано новых файлов: {added}")
-        
-        # Индексация отдельной базы знаний портфолио
-        portfolio_data_dir = config.DATA_DIR / "portfolio"
-
-        print(f"Проверка документов портфолио в {portfolio_data_dir}...")
-        portfolio_added = self.vector_stores["portfolio"].sync_portfolio_directory(
-            portfolio_data_dir
-        )
-
-        if portfolio_added:
-            print(f"Индексировано файлов портфолио: {portfolio_added}")
+        for mode, settings in self.knowledge_bases.items():
+            kb_dir = settings["data_dir"]
+            print(f"Синхронизация KB {mode}: {kb_dir}")
+            updated = self.vector_stores[mode].sync_data_directory(kb_dir)
+            print(f"KB {mode}: обновлено документов — {updated}")
 
         print("Инициализация кеша...")
         self.cache = RAGCache(db_path=cache_db_path or config.CACHE_DB_PATH)
@@ -189,10 +179,7 @@ class RAGPipeline:
 
         vector_store = self.vector_stores[mode]
 
-        if mode == "portfolio":
-            kb_version = vector_store.get_portfolio_index_version()
-        else:
-            kb_version = self.knowledge_bases[mode]["version"]
+        kb_version = vector_store.get_index_version()
 
         # Шаг 1: Проверка кеша
         if use_cache:

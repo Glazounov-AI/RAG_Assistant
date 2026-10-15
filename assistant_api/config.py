@@ -9,15 +9,20 @@ COLLECTION_NAME = "api_rag_collection"
 # Режимы работы RAG Assistant
 DEFAULT_MODE = "support"
 
+DATA_DIR = PROJECT_DIR / "data"
+DATA_EXTENSIONS = {".txt", ".md", ".markdown"}
+
 KNOWLEDGE_BASES = {
     "support": {
         "collection": COLLECTION_NAME,
+        "data_dir": DATA_DIR,
         "version": "v1",
         "max_query_length": 2000,
         "rate_limit_per_minute": 10,
     },
     "portfolio": {
         "collection": "portfolio_kb",
+        "data_dir": DATA_DIR / "portfolio",
         "version": "v1",
         "max_query_length": 8000,
         "rate_limit_per_minute": 5,
@@ -62,10 +67,6 @@ CACHE_DB_PATH = DEFAULT_CACHE_DB_PATH
 
 # Логи запросов
 LOGS_DB_PATH = DEFAULT_LOGS_DB_PATH
-
-# Документы для индексации (сканируется при каждом запуске)
-DATA_DIR = PROJECT_DIR / "data"
-DATA_EXTENSIONS = {".txt", ".md", ".markdown"}
 
 # LLM
 MODEL = "gpt-4o-mini"
