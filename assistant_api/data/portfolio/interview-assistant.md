@@ -1,8 +1,8 @@
 # AI Interview Coach — ИИ-ассистент для подготовки к собеседованиям
 
-**Тип проекта:** AI-ассистент, Prompt Engineering, Knowledge Base, карьерный помощник  
-**Статус:** разработанный и протестированный демонстрационный прототип  
-**Платформа:** OpenAI Playground  
+**Тип проекта:** AI-ассистент, Prompt Engineering, Knowledge Base, карьерный помощник
+**Статус:** разработанный и протестированный демонстрационный прототип
+**Платформа:** OpenAI Playground
 **Репозиторий:** https://github.com/Glazounov-AI/interview-assistant
 
 ## Назначение проекта

@@ -2,11 +2,11 @@
 
 ## Общая информация
 
-**Название:** Glazounov AI Lab 
-**Автор:** Андрей Глазунов 
-**Сайт:** https://glazounov-ai.ru 
-**GitHub:** https://github.com/Glazounov-AI 
-**Telegram-канал:** https://t.me/glazounovailab 
+**Название:** Glazounov AI Lab
+**Автор:** Андрей Глазунов
+**Сайт:** https://glazounov-ai.ru
+**GitHub:** https://github.com/Glazounov-AI
+**Telegram-канал:** https://t.me/glazounovailab
 **Электронная почта:** nick-asg@yandex.ru
 
 Glazounov AI Lab — персональное портфолио проектов в области искусственного интеллекта, программирования, проектирования баз данных и автоматизации.
@@ -368,6 +368,6 @@ Glazounov AI Lab — персональное портфолио Андрея Г
 В портфолио представлены пять проектов, демонстрирующих работу с языковыми моделями, базами знаний, API, дообучением моделей и оценкой качества.
 
 **Сайт:** https://glazounov-ai.ru
-**Telegram-канал:** https://t.me/glazounovailab 
-**Электронная почта:** nick-asg@yandex.ru 
+**Telegram-канал:** https://t.me/glazounovailab
+**Электронная почта:** nick-asg@yandex.ru
 **GitHub:** https://github.com/Glazounov-AI

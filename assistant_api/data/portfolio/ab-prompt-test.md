@@ -1,10 +1,10 @@
 # A/B Prompt Test — сравнительное тестирование системных промптов
 
-**Тип проекта:** Prompt Engineering, A/B Testing, AI Evaluation, автоматизация тестирования  
-**Статус:** завершённый эксперимент с документированными результатами  
-**Модель:** OpenAI GPT-4o mini  
-**Технологии:** n8n, OpenAI API, Google Sheets, Microsoft Excel  
-**Репозиторий:** https://github.com/Glazounov-AI/ab-prompt-test  
+**Тип проекта:** Prompt Engineering, A/B Testing, AI Evaluation, автоматизация тестирования
+**Статус:** завершённый эксперимент с документированными результатами
+**Модель:** OpenAI GPT-4o mini
+**Технологии:** n8n, OpenAI API, Google Sheets, Microsoft Excel
+**Репозиторий:** https://github.com/Glazounov-AI/ab-prompt-test
 **Страница портфолио:** https://glazounov-ai.ru/portfolio/ab-prompt-test/
 
 ## Назначение проекта
