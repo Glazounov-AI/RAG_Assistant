@@ -4,6 +4,24 @@ from paths import PROJECT_DIR, DEFAULT_CACHE_DB_PATH, DEFAULT_LOGS_DB_PATH, DEFA
 
 # ChromaDB
 COLLECTION_NAME = "gigachat_rag_collection"
+DEFAULT_MODE = "support"
+
+DATA_DIR = PROJECT_DIR / "data"
+DATA_EXTENSIONS = {".txt", ".md", ".markdown"}
+
+KNOWLEDGE_BASES = {
+    "support": {
+        "collection": COLLECTION_NAME,
+        "data_dir": DATA_DIR,
+        "version": "v1",
+    },
+    "portfolio": {
+        "collection": "gigachat_portfolio_kb",
+        "data_dir": PROJECT_DIR.parent / "assistant_api" / "data" / "portfolio",
+        "version": "v1",
+    },
+}
+
 CHROMADB_PATH = DEFAULT_CHROMADB_PATH
 
 # Кэш
@@ -11,10 +29,6 @@ CACHE_DB_PATH = DEFAULT_CACHE_DB_PATH
 
 # Логи запросов
 LOGS_DB_PATH = DEFAULT_LOGS_DB_PATH
-
-# Документы для индексации (сканируется при каждом запуске)
-DATA_DIR = PROJECT_DIR / "data"
-DATA_EXTENSIONS = {".txt", ".md", ".markdown"}
 
 # LLM
 MODEL = "GigaChat"

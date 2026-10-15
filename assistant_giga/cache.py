@@ -47,21 +47,32 @@ class RAGCache:
         conn.commit()
         conn.close()
     
-    def _get_query_hash(self, query: str) -> str:
-        """
-        Вычисление хеша запроса для использования как ключ кеша.
-        
-        Args:
-            query: текст запроса
-            
-        Returns:
-            SHA-256 хеш запроса
-        """
-        # Нормализация запроса: lowercase и удаление лишних пробелов
+    def _get_query_hash(
+        self,
+        query: str,
+        mode: str | None = None,
+        kb_version: str | None = None,
+    ) -> str:
+        """Создаёт ключ кэша с учётом режима и версии базы знаний."""
         normalized_query = " ".join(query.lower().strip().split())
-        return hashlib.sha256(normalized_query.encode()).hexdigest()
+
+        if mode is None and kb_version is None:
+            # Совместимость со старым кэшем
+            cache_key = normalized_query
+        else:
+            if not mode or not kb_version:
+                raise ValueError("mode и kb_version должны передаваться вместе")
+
+            cache_key = f"{mode}:{kb_version}:{normalized_query}"
+
+        return hashlib.sha256(cache_key.encode("utf-8")).hexdigest()
     
-    def get(self, query: str) -> Optional[Dict[str, Any]]:
+    def get(
+        self,
+        query: str,
+        mode: str | None = None,
+        kb_version: str | None = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Получение ответа из кеша.
         
@@ -71,7 +82,7 @@ class RAGCache:
         Returns:
             Словарь с ответом и метаданными, или None если не найдено
         """
-        query_hash = self._get_query_hash(query)
+        query_hash = self._get_query_hash(query, mode, kb_version)
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -96,7 +107,14 @@ class RAGCache:
         
         return None
     
-    def set(self, query: str, answer: str, context: list = None):
+    def set(
+        self,
+        query: str,
+        answer: str,
+        context: list = None,
+        mode: str | None = None,
+        kb_version: str | None = None,
+    ):
         """
         Сохранение ответа в кеш.
         
@@ -105,7 +123,7 @@ class RAGCache:
             answer: текст ответа
             context: список документов, использованных как контекст
         """
-        query_hash = self._get_query_hash(query)
+        query_hash = self._get_query_hash(query, mode, kb_version)
         context_json = json.dumps(context) if context else None
         
         conn = sqlite3.connect(self.db_path)

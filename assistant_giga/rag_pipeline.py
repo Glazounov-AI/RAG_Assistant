@@ -39,15 +39,32 @@ class RAGPipeline:
         self.gigachat_client = GigaChatClient()
         data_dir = str(data_dir or config.DATA_DIR)
         
-        # Инициализация компонентов
-        print("Инициализация векторного хранилища...")
-        self.vector_store = VectorStore(collection_name=collection_name)
-        
-        print(f"Проверка новых документов в {data_dir}...")
-        added = self.vector_store.sync_data_directory(data_dir)
-        if added:
-            print(f"Индексировано новых файлов: {added}")
-        
+        # Настройки баз знаний
+        self.default_mode = config.DEFAULT_MODE
+        self.knowledge_bases = config.KNOWLEDGE_BASES
+
+        if collection_name != self.knowledge_bases[self.default_mode]["collection"]:
+            raise ValueError("Коллекция не соответствует режиму support")
+
+        self.vector_stores = {}
+
+        for mode, settings in self.knowledge_bases.items():
+            name = settings["collection"]
+            source_dir = (
+                data_dir if mode == self.default_mode
+                else settings["data_dir"]
+            )
+
+            print(f"Инициализация KB: {mode}")
+            store = VectorStore(collection_name=name)
+            updated = store.sync_data_directory(source_dir)
+
+            self.vector_stores[mode] = store
+            print(f"KB {mode}: обновлено документов — {updated}")
+
+        # Совместимость со старым интерфейсом
+        self.vector_store = self.vector_stores[self.default_mode]
+
         print("Инициализация кеша...")
         self.cache = RAGCache(db_path=cache_db_path or config.CACHE_DB_PATH)
         
@@ -114,7 +131,7 @@ class RAGPipeline:
         
         return answer.strip()
     
-    def query(self, user_query: str, use_cache: bool = True) -> Dict[str, Any]:
+    def query(self, user_query: str, use_cache: bool = True, mode: str | None = None) -> Dict[str, Any]:
         """
         Основной метод для обработки запроса пользователя.
         
@@ -136,10 +153,17 @@ class RAGPipeline:
         print(f"Запрос: {user_query}")
         print(f"{'='*60}")
         
+        mode = mode or self.default_mode
+        if mode not in self.knowledge_bases:
+            raise ValueError(f"Неизвестный режим работы: {mode}")
+
+        vector_store = self.vector_stores[mode]
+        kb_version = vector_store.get_index_version()
+
         # Шаг 1: Проверка кеша
         if use_cache:
             print("→ Проверка кеша...")
-            cached_result = self.cache.get(user_query)
+            cached_result = self.cache.get(user_query, mode=mode, kb_version=kb_version)
             
             if cached_result:
                 print("✓ Ответ найден в кеше")
@@ -155,7 +179,7 @@ class RAGPipeline:
         
         # Шаг 2: Поиск релевантных документов
         print("→ Поиск релевантных документов...")
-        context_docs = self.vector_store.search(user_query, top_k=config.TOP_K)
+        context_docs = vector_store.search(user_query, top_k=config.TOP_K)
         print(f"✓ Найдено {len(context_docs)} релевантных документов")
         
         # Шаг 3: Формирование промпта
@@ -171,7 +195,7 @@ class RAGPipeline:
         if use_cache:
             print("→ Сохранение в кеш...")
             context_for_cache = [doc['text'] for doc in context_docs]
-            self.cache.set(user_query, answer, context_for_cache)
+            self.cache.set(user_query, answer, context_for_cache, mode=mode, kb_version=kb_version)
             print("✓ Сохранено в кеш")
         
         return {

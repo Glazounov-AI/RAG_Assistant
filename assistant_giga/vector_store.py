@@ -1,3 +1,5 @@
+import uuid
+import hashlib
 """
 Модуль работы с векторным хранилищем ChromaDB для GigaChat.
 Обрабатывает загрузку документов, chunking и поиск по векторам.
@@ -105,9 +107,19 @@ class VectorStore:
         if current_chunk:
             chunks.append(current_chunk)
         
-        # Пост-обработка: фильтруем слишком короткие чанки
-        chunks = [chunk for chunk in chunks if len(chunk) >= config.MIN_CHUNK_SIZE]
-        
+        # Сохраняем исходные чанки до фильтрации.
+        original_chunks = chunks
+
+        # Пост-обработка: фильтруем слишком короткие чанки.
+        chunks = [
+            chunk for chunk in original_chunks
+            if len(chunk) >= config.MIN_CHUNK_SIZE
+        ]
+
+        # Не теряем содержимое небольшого документа целиком.
+        if not chunks and original_chunks:
+            chunks = original_chunks
+
         return chunks
     
     def _get_overlap_text(self, text: str, overlap_size: int | None = None) -> str:
@@ -223,102 +235,198 @@ class VectorStore:
             if path.is_file() and path.suffix.lower() in config.DATA_EXTENSIONS
         )
 
-    def sync_data_directory(self, data_dir: str | Path) -> int:
-        """
-        Сканирует папку data и индексирует только новые файлы.
+    @staticmethod
+    def _index_config_hash() -> str:
+        """SHA-256 параметров построения векторного индекса."""
+        settings = (
+            config.EMBEDDING_MODEL,
+            config.CHUNK_SIZE,
+            config.CHUNK_OVERLAP,
+            config.MIN_CHUNK_SIZE,
+        )
+        return hashlib.sha256(repr(settings).encode("utf-8")).hexdigest()
 
-        Args:
-            data_dir: путь к папке с документами
+    def get_index_version(self) -> str:
+        """Возвращает версию по фактически сохранённым чанкам портфолио."""
 
-        Returns:
-            количество проиндексированных файлов
-        """
-        data_dir = Path(data_dir)
-        if not data_dir.is_dir():
-            raise FileNotFoundError(f"Папка {data_dir} не найдена")
+        indexed = self.collection.get(include=["metadatas"])
 
-        indexed_sources = self._get_indexed_sources()
-        new_files = [
-            path for path in self._list_data_files(data_dir)
-            if path.name not in indexed_sources
-        ]
-
-        if not new_files:
-            print("Новых документов для индексации не найдено")
-            return 0
-
-        for file_path in new_files:
-            self._load_file(file_path)
-
-        return len(new_files)
-
-    def _load_file(self, file_path: Path) -> int:
-        """
-        Индексация одного файла в ChromaDB.
-
-        Args:
-            file_path: путь к файлу
-
-        Returns:
-            количество добавленных чанков
-        """
-        source = file_path.name
-        print(f"Индексация файла: {source}")
-
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        chunks = self._chunk_text(text)
-        if not chunks:
-            print(f"Файл {source}: нет чанков для индексации")
-            return 0
-
-        print(f"Текст разбит на {len(chunks)} чанков")
-
-        documents = []
-        ids = []
-        embeddings = []
-        metadatas = []
-
-        for i, chunk in enumerate(chunks):
-            embedding = self._create_embedding(chunk)
-
-            documents.append(chunk)
-            ids.append(f"{source}_{i}")
-            embeddings.append(embedding)
-            metadatas.append({"source": source})
-
-            if (i + 1) % 10 == 0:
-                print(f"Обработано {i + 1}/{len(chunks)} чанков")
-
-        self.collection.add(
-            documents=documents,
-            embeddings=embeddings,
-            ids=ids,
-            metadatas=metadatas,
+        entries = sorted(
+            (
+                chunk_id,
+                (metadata or {}).get("content_hash", ""),
+                (metadata or {}).get("config_hash", ""),
+            )
+            for chunk_id, metadata in zip(
+                indexed["ids"],
+                indexed["metadatas"] or [],
+            )
         )
 
-        print(f"Файл {source}: добавлено {len(chunks)} чанков")
-        return len(chunks)
+        signature = "\n".join(
+            f"{chunk_id}:{content_hash}:{config_hash}"
+            for chunk_id, content_hash, config_hash in entries
+        )
 
-    def load_documents(self, file_path: str):
-        """
-        Загрузка одного файла в векторное хранилище.
+        return hashlib.sha256(signature.encode("utf-8")).hexdigest()
 
-        Args:
-            file_path: путь к файлу с документами
-        """
-        path = Path(file_path)
-        if not path.is_file():
-            raise FileNotFoundError(f"Файл {file_path} не найден")
+    def sync_data_directory(self, data_dir: str | Path) -> int:
+        """Индексирует новые и изменённые документы портфолио."""
 
-        indexed = self._get_indexed_sources()
-        if path.name in indexed:
-            print(f"Файл {path.name} уже проиндексирован")
-            return
+        data_dir = Path(data_dir)
+        if not data_dir.is_dir():
+            raise FileNotFoundError(f"Каталог не найден: {data_dir}")
 
-        self._load_file(path)
-    
+        updated = 0
+        config_hash = self._index_config_hash()
+
+        for file_path in self._list_data_files(data_dir):
+            source = file_path.name
+            text = file_path.read_text(encoding="utf-8")
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+            existing = self.collection.get(
+                where={"source": source},
+                include=["metadatas"],
+            )
+            old_ids = existing["ids"]
+            old_metadatas = existing.get("metadatas") or []
+
+            # Группируем проиндексированные чанки по ревизиям.
+            revisions = {}
+
+            for chunk_id, metadata in zip(old_ids, old_metadatas):
+                if not metadata:
+                    continue
+
+                revision = metadata.get("revision")
+                indexed_hash = metadata.get("content_hash")
+                indexed_config = metadata.get("config_hash")
+
+                if revision and indexed_hash and indexed_config == config_hash:
+                    revisions.setdefault(
+                        (revision, indexed_hash), []
+                    ).append(chunk_id)
+
+            # Ищем ревизию, соответствующую текущему содержимому файла.
+            matching_revisions = []
+
+            for (revision, indexed_hash), ids in revisions.items():
+                if indexed_hash != content_hash:
+                    continue
+
+                revision_metadatas = [
+                    metadata
+                    for metadata in old_metadatas
+                    if metadata
+                    and metadata.get("revision") == revision
+                    and metadata.get("content_hash") == indexed_hash
+                ]
+
+                expected_counts = {
+                    metadata.get("chunk_count")
+                    for metadata in revision_metadatas
+                }
+
+                # Ревизия считается полной, только если все её чанки
+                # имеют одинаковое ожидаемое количество.
+                if len(expected_counts) != 1:
+                    continue
+
+                expected_count = next(iter(expected_counts))
+
+                if type(expected_count) is not int or expected_count <= 0:
+                    continue
+
+                expected_ids = {
+                    f"{source}_{revision}_{i}"
+                    for i in range(expected_count)
+                }
+
+                if set(ids) == expected_ids:
+                    matching_revisions.append((revision, ids))
+
+            if matching_revisions:
+                # При наличии нескольких совпадений сохраняем одно.
+                matching_revisions.sort(key=lambda item: item[0])
+                keep_revision, keep_ids = matching_revisions[-1]
+
+                redundant_ids = [
+                    chunk_id
+                    for chunk_id in old_ids
+                    if chunk_id not in set(keep_ids)
+                ]
+
+                if redundant_ids:
+                    self.collection.delete(ids=redundant_ids)
+                    print(f"Удалены лишние ревизии документа: {source}")
+
+                continue
+
+            chunks = self._chunk_text(text)
+            if not chunks:
+                raise ValueError(f"Документ пуст после разбиения: {source}")
+
+            revision = uuid.uuid4().hex
+            new_ids = [f"{source}_{revision}_{i}" for i in range(len(chunks))]
+            embeddings = [self._create_embedding(chunk) for chunk in chunks]
+            metadatas = [
+                {
+                    "source": source,
+                    "content_hash": content_hash,
+                    "config_hash": config_hash,
+                    "revision": revision,
+                    "chunk_count": len(chunks),
+                }
+                for _ in chunks
+            ]
+
+            # Сначала записываем новую ревизию
+            try:
+                self.collection.add(
+                    ids=new_ids,
+                    documents=chunks,
+                    embeddings=embeddings,
+                    metadatas=metadatas,
+                )
+
+            except Exception:
+                # При частичной записи пытаемся удалить новые чанки.
+                # Старую ревизию не затрагиваем.
+                try:
+                    self.collection.delete(ids=new_ids)
+                except Exception as cleanup_error:
+                    print(
+                        f"ВНИМАНИЕ: не удалось очистить "
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
+
+                raise
+
+            # Только после успешной записи удаляем старую
+            if old_ids:
+                self.collection.delete(ids=old_ids)
+
+            updated += 1
+            print(f"Обновлён документ портфолио: {source}")
+
+        # Удаляем документы, которых больше нет в исходном каталоге.
+        current_sources = {
+            path.name for path in self._list_data_files(data_dir)
+        }
+        indexed_sources = self._get_indexed_sources()
+
+        if not current_sources and indexed_sources:
+            raise RuntimeError(
+                f"Каталог {data_dir} пуст. Удаление всей KB заблокировано."
+            )
+
+        for source in indexed_sources - current_sources:
+            self.collection.delete(where={"source": source})
+            print(f"Удалён из индекса: {source}")
+
+        return updated
+
     def _create_embedding(self, text: str) -> List[float]:
         """
         Создание векторного представления текста через GigaChat.
