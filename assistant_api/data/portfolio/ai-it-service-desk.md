@@ -1,3 +1,14 @@
+<!-- object
+{
+  "object_id": "ai-it-service-desk",
+  "object_type": "project",
+  "title": "AI IT Service Desk",
+  "summary": "интеллектуальный ассистент первой линии IT-поддержки",
+  "category": "assistant",
+  "technologies": []
+}
+-->
+
 # AI IT Service Desk — интеллектуальный ассистент первой линии IT-поддержки
 
 **Тип проекта:** AI-ассистент, IT Service Desk, Knowledge Base, Prompt Engineering

@@ -1,3 +1,23 @@
+<!-- object
+{
+  "object_id": "rag-assistant",
+  "object_type": "project",
+  "title": "RAG Assistant",
+  "summary": "интеллектуальный поиск по базе знаний",
+  "category": "rag",
+  "technologies": [
+    "Python",
+    "FastAPI",
+    "ChromaDB",
+    "SQLite",
+    "OpenAI API",
+    "GPT-4o-mini",
+    "text-embedding-3-small",
+    "Railway"
+  ]
+}
+-->
+
 # RAG Assistant — интеллектуальный поиск по базе знаний
 
 **Тип проекта:** AI-ассистент, RAG, поиск по документам, HTTP API

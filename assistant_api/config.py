@@ -94,3 +94,12 @@ KNOWLEDGE_BASES["support"]["system_prompt"] = SYSTEM_PROMPT
 KNOWLEDGE_BASES["portfolio"]["system_prompt"] = PORTFOLIO_SYSTEM_PROMPT
 if os.getenv("RAG_PROFILES_DIR"):
     KNOWLEDGE_BASES.update(load_profiles(os.environ["RAG_PROFILES_DIR"], KNOWLEDGE_BASES))
+
+KNOWLEDGE_BASES["portfolio"]["catalog"] = {"noun": "проектов", "plural": "проекты", "object_type": "project", "strategies": ["semantic", "list", "count", "filter"], "filter_fields": ["category", "technologies"], "page_size": 20}
+
+KNOWLEDGE_BASES["portfolio"]["catalog"]["query_aliases"] = {
+    "count": ["сколько всего проектов"],
+    "list": ["какие проекты есть", "какие есть проекты", "покажи проекты", "перечисли проекты"],
+    "filter": {"technologies": ["покажи проекты на", "проекты на", "какие проекты на"]},
+    "values": {"technologies": ["Python", "PHP", "COBOL", "Java", "JavaScript", "n8n", "FastAPI", "LoRA", "SQLite", "ChromaDB"]},
+}

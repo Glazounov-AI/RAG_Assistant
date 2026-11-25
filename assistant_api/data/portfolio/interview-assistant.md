@@ -1,3 +1,16 @@
+<!-- object
+{
+  "object_id": "interview-assistant",
+  "object_type": "project",
+  "title": "AI Interview Coach",
+  "summary": "ИИ-ассистент для подготовки к собеседованиям",
+  "category": "assistant",
+  "technologies": [
+    "OpenAI Playground"
+  ]
+}
+-->
+
 # AI Interview Coach — ИИ-ассистент для подготовки к собеседованиям
 
 **Тип проекта:** AI-ассистент, Prompt Engineering, Knowledge Base, карьерный помощник

@@ -66,6 +66,9 @@ class QueryResponse(BaseModel):
     model: str
     retrieved_sources: list[dict] = Field(default_factory=list)
     usage: dict = Field(default_factory=dict)
+    strategy: str = "semantic"
+    total: int | None = None
+    page: int | None = None
 
 
 @asynccontextmanager
@@ -176,4 +179,7 @@ def query(request: QueryRequest, http_request: Request):
         model=result.get("model", pipeline.model),
         retrieved_sources=result.get("retrieved_sources", []),
         usage=result.get("usage", {}),
+        strategy=result.get("strategy", "semantic"),
+        total=result.get("total"),
+        page=result.get("page"),
     )

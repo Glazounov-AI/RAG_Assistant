@@ -1,3 +1,19 @@
+<!-- object
+{
+  "object_id": "ab-prompt-test",
+  "object_type": "project",
+  "title": "A/B Prompt Test",
+  "summary": "сравнительное тестирование системных промптов",
+  "category": "evaluation",
+  "technologies": [
+    "n8n",
+    "OpenAI API",
+    "Google Sheets",
+    "Microsoft Excel"
+  ]
+}
+-->
+
 # A/B Prompt Test — сравнительное тестирование системных промптов
 
 **Тип проекта:** Prompt Engineering, A/B Testing, AI Evaluation, автоматизация тестирования

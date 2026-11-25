@@ -1,3 +1,25 @@
+<!-- object
+{
+  "object_id": "client-request-normalizer",
+  "object_type": "project",
+  "title": "Client Request Normalizer",
+  "summary": "нормализация клиентских запросов с помощью LoRA",
+  "category": "fine-tuning",
+  "technologies": [
+    "Python",
+    "LoRA",
+    "PyTorch",
+    "CUDA",
+    "Hugging Face Transformers",
+    "PEFT",
+    "Hugging Face Datasets",
+    "Accelerate",
+    "JSON Lines",
+    "Git"
+  ]
+}
+-->
+
 # Client Request Normalizer — нормализация клиентских запросов с помощью LoRA
 
 **Тип проекта:** NLP, Fine-Tuning, LoRA, Structured Data Extraction, машинное обучение

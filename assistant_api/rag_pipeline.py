@@ -17,6 +17,9 @@ from openai import OpenAI
 from vector_store import VectorStore
 from cache import RAGCache
 import config
+from paths import DB_DIR
+from object_registry import ObjectRegistry, validate_catalog
+from query_router import route, execute
 
 
 class RAGPipeline:
@@ -76,6 +79,14 @@ class RAGPipeline:
             print(f"Синхронизация KB {mode}: {kb_dir}")
             updated = self.vector_stores[mode].sync_data_directory(kb_dir)
             print(f"KB {mode}: обновлено документов — {updated}")
+
+        self.object_registry = None
+        for mode, settings in self.knowledge_bases.items():
+            validate_catalog(settings)
+            if settings.get("catalog"):
+                if self.object_registry is None:
+                    self.object_registry = ObjectRegistry(DB_DIR / "objects" / "registry.db")
+                self.object_registry.sync(mode, settings["data_dir"], settings["catalog"])
 
         print("Инициализация кеша...")
         self.cache = RAGCache(db_path=cache_db_path or config.CACHE_DB_PATH)
@@ -186,6 +197,10 @@ class RAGPipeline:
         vector_store = self.vector_stores[mode]
 
         settings = self.knowledge_bases[mode]
+        if settings.get("catalog"):
+            strategy, args = route(user_query, settings["catalog"])
+            if strategy != "semantic":
+                return execute(self.object_registry, mode, user_query, settings["catalog"], strategy, args)
         model = settings.get("model", self.model)
         use_cache = use_cache and settings.get("cache_enabled", True)
         signature = json.dumps(["f2-v1", model, settings.get("system_prompt", config.SYSTEM_PROMPT), settings.get("top_k", config.TOP_K), settings.get("temperature", config.TEMPERATURE), settings.get("max_tokens", config.MAX_TOKENS)], ensure_ascii=False)

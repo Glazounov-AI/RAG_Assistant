@@ -1,4 +1,5 @@
 """Load trusted, local JSON profile manifests; never accept paths from HTTP clients."""
+from object_registry import validate_catalog
 import json
 import re
 from pathlib import Path
@@ -34,5 +35,6 @@ def load_profiles(directory, existing):
         p["system_prompt"] = (manifest.parent / p.pop("prompt_file")).read_text(encoding="utf-8").strip()
         if not p["system_prompt"]:
             raise ValueError("Empty system prompt")
+        validate_catalog(p)
         result[mode] = p
     return result
