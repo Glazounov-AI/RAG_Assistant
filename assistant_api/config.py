@@ -103,3 +103,7 @@ KNOWLEDGE_BASES["portfolio"]["catalog"]["query_aliases"] = {
     "filter": {"technologies": ["покажи проекты на", "проекты на", "какие проекты на"]},
     "values": {"technologies": ["Python", "PHP", "COBOL", "Java", "JavaScript", "n8n", "FastAPI", "LoRA", "SQLite", "ChromaDB"]},
 }
+
+# Independent structured generation (opt-in).
+GENERATION_PROFILES_DIR = os.getenv("RAG_GENERATION_PROFILES_DIR", "")
+GENERATION_ACCESS_KEY = os.getenv("RAG_GENERATION_ACCESS_KEY", "")

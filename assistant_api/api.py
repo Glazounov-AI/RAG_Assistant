@@ -6,6 +6,11 @@
 """
 
 import secrets
+import json
+from generation import generate, serialize_input
+from generation_models import GenerationRequest, GenerationResponse
+from generation_profiles import load_generation_profiles
+from config import GENERATION_PROFILES_DIR, GENERATION_ACCESS_KEY
 from openai import APITimeoutError
 import time
 from contextlib import asynccontextmanager
@@ -80,6 +85,10 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(
             "RAG_API_ACCESS_KEY must be configured when API authentication is enabled"
         )
+
+    app.state.generation_profiles = load_generation_profiles(GENERATION_PROFILES_DIR)
+    if app.state.generation_profiles and not GENERATION_ACCESS_KEY:
+        raise RuntimeError("RAG_GENERATION_ACCESS_KEY must be configured")
 
     # Тяжёлая инициализация ( ChromaDB, кеш, индексация ) — один раз
     app.state.pipeline = RAGPipeline()
@@ -183,3 +192,29 @@ def query(request: QueryRequest, http_request: Request):
         total=result.get("total"),
         page=result.get("page"),
     )
+
+
+@app.post("/generate", response_model=GenerationResponse, responses={code: {"description": description} for code, description in [(401,"Invalid API key"),(403,"Generation access denied"),(422,"Invalid input or profile"),(429,"Rate limit"),(502,"Invalid provider response"),(503,"Provider unavailable"),(504,"Provider timeout")]})
+def generate_endpoint(request: GenerationRequest, http_request: Request):
+    if API_AUTH_ENABLED and not secrets.compare_digest(http_request.headers.get("X-API-Key", "").encode(), API_ACCESS_KEY.encode()):
+        raise HTTPException(401, "Invalid API key")
+    if not GENERATION_ACCESS_KEY or not secrets.compare_digest(http_request.headers.get("X-Generation-Key", "").encode(), GENERATION_ACCESS_KEY.encode()):
+        raise HTTPException(403, "Generation access denied")
+    entry = app.state.generation_profiles.get(request.profile)
+    if entry is None:
+        raise HTTPException(422, "Unknown generation profile")
+    profile = entry[0]
+    text = serialize_input(request.input)
+    if len(text) > profile.max_input_length:
+        raise HTTPException(422, "Generation input too long")
+    limiter = app.state.rate_limiter
+    if limiter is not None and not limiter.check(http_request.client.host if http_request.client else "unknown", "generate:" + profile.profile, profile.rate_limit_per_minute):
+        raise HTTPException(429, "Generation rate limit exceeded")
+    result = generate(entry, text)
+    logger = app.state.logger
+    if logger is not None:
+        try:
+            logger.log(query=text if profile.log_content else "[redacted]", response=json.dumps(result["result"], ensure_ascii=False) if profile.log_content else "[redacted]", from_cache=False, response_time_ms=result["response_time_ms"], source="generate", mode=profile.profile, model=result["model"], usage=result["usage"])
+        except Exception:
+            print("Generation logging failed")
+    return result
