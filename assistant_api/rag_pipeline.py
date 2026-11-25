@@ -5,6 +5,13 @@
 
 from typing import Dict, Any, List
 import os
+import hashlib
+import json
+import time
+from contextvars import ContextVar
+from vector_store import embedding_tokens
+
+_generation_usage = ContextVar("generation_usage", default=None)
 from openai import OpenAI
 
 from vector_store import VectorStore
@@ -34,7 +41,7 @@ class RAGPipeline:
             raise ValueError("OPENAI_API_KEY не установлен")
         
         self.model = model
-        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15.0, max_retries=0)
         data_dir = str(data_dir or config.DATA_DIR)
 
         # Настройки режимов и коллекций
@@ -89,7 +96,7 @@ class RAGPipeline:
         # Формирование контекста из документов
         context_parts = []
         for i, doc in enumerate(context_docs, 1):
-            context_parts.append(f"Документ {i}:\n{doc['text']}\n")
+            context_parts.append(f"Документ {i} ({doc.get('source') or 'unknown'}):\n{doc['text']}\n")
         
         context = "\n".join(context_parts)
         
@@ -126,22 +133,21 @@ class RAGPipeline:
             сгенерированный ответ
         """
 
-        system_prompt = (
-            config.PORTFOLIO_SYSTEM_PROMPT
-            if mode == "portfolio"
-            else config.SYSTEM_PROMPT
-        )
+        settings = self.knowledge_bases[mode]
+        system_prompt = settings.get("system_prompt", config.SYSTEM_PROMPT)
 
         response = self.openai_client.chat.completions.create(
-            model=self.model,
+            model=settings.get("model", self.model),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ],
-            temperature=config.TEMPERATURE,
-            max_tokens=config.MAX_TOKENS
+            temperature=settings.get("temperature", config.TEMPERATURE),
+            max_tokens=settings.get("max_tokens", config.MAX_TOKENS)
         )
         
+        usage = getattr(response, "usage", None)
+        _generation_usage.set({"input_tokens": getattr(usage, "prompt_tokens", None), "output_tokens": getattr(usage, "completion_tokens", None)})
         return response.choices[0].message.content.strip()
     
     def query(
@@ -168,7 +174,7 @@ class RAGPipeline:
             словарь с ответом и метаданными
         """
         print(f"\n{'='*60}")
-        print(f"Запрос: {user_query}")
+        print("Обработка запроса")
         print(f"{'='*60}")
         
         # Определяем режим и соответствующую базу знаний
@@ -179,7 +185,14 @@ class RAGPipeline:
 
         vector_store = self.vector_stores[mode]
 
-        kb_version = vector_store.get_index_version()
+        settings = self.knowledge_bases[mode]
+        model = settings.get("model", self.model)
+        use_cache = use_cache and settings.get("cache_enabled", True)
+        signature = json.dumps(["f2-v1", model, settings.get("system_prompt", config.SYSTEM_PROMPT), settings.get("top_k", config.TOP_K), settings.get("temperature", config.TEMPERATURE), settings.get("max_tokens", config.MAX_TOKENS)], ensure_ascii=False)
+        kb_version = vector_store.get_index_version() + ":" + hashlib.sha256(signature.encode()).hexdigest()
+        started = time.perf_counter()
+        embedding_tokens.set(None)
+        _generation_usage.set(None)
 
         # Шаг 1: Проверка кеша
         if use_cache:
@@ -197,14 +210,17 @@ class RAGPipeline:
                     "answer": cached_result["answer"],
                     "from_cache": True,
                     "context_docs": cached_result.get("context"),
-                    "cached_at": cached_result.get("created_at")
+                    "cached_at": cached_result.get("created_at"),
+                    "model": model,
+                    "retrieved_sources": self._sources(cached_result.get("context") or []),
+                    "usage": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": 0}
                 }
             else:
                 print("[-] Ответ не найден в кеше")
         
         # Шаг 2: Поиск релевантных документов
         print("[*] Поиск релевантных документов через API...")
-        context_docs = vector_store.search(user_query, top_k=config.TOP_K)
+        context_docs = vector_store.search(user_query, top_k=settings.get("top_k", config.TOP_K))
         print(f"[+] Найдено {len(context_docs)} релевантных документов")
         
         # Шаг 3: Формирование промпта
@@ -212,14 +228,14 @@ class RAGPipeline:
         prompt = self._create_prompt(user_query, context_docs)
         
         # Шаг 4: Генерация ответа через API
-        print(f"[*] Генерация ответа через OpenAI API ({self.model})...")
+        print(f"[*] Генерация ответа через OpenAI API ({model})...")
         answer = self._generate_answer(prompt, mode=mode)
         print("[+] Ответ получен от API")
         
         # Шаг 5: Сохранение в кеш
         if use_cache:
             print("[*] Сохранение в кеш...")
-            context_for_cache = [doc['text'] for doc in context_docs]
+            context_for_cache = context_docs
             self.cache.set(
                 user_query,
                 answer,
@@ -234,10 +250,17 @@ class RAGPipeline:
             "answer": answer,
             "from_cache": False,
             "context_docs": context_docs,
-            "model": self.model,
-            "mode": "API"
+            "model": model,
+            "mode": "API",
+            "retrieved_sources": self._sources(context_docs),
+            "usage": {**(_generation_usage.get() or {}), "embedding_tokens": embedding_tokens.get()},
+            "elapsed_ms": (time.perf_counter() - started) * 1000,
         }
-    
+
+    @staticmethod
+    def _sources(docs):
+        return [{"source": doc["source"], "distance": doc.get("distance")} for doc in docs if isinstance(doc, dict) and doc.get("source")]
+
     def get_stats(self) -> Dict[str, Any]:
         """
         Получение статистики системы.

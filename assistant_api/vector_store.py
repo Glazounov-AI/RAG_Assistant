@@ -3,6 +3,10 @@
 Обрабатывает загрузку документов, chunking и поиск по векторам.
 """
 
+from contextvars import ContextVar
+
+embedding_tokens = ContextVar("embedding_tokens", default=None)
+
 import chromadb
 from chromadb.config import Settings
 from typing import List, Dict, Any
@@ -55,7 +59,7 @@ class VectorStore:
             print(f"Создана новая коллекция '{collection_name}'")
         
         # OpenAI клиент для создания embeddings
-        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=10.0, max_retries=0)
     
     def _chunk_text(self, text: str) -> List[str]:
         """
@@ -257,7 +261,7 @@ class VectorStore:
         return hashlib.sha256(repr(settings).encode("utf-8")).hexdigest()
 
     def get_index_version(self) -> str:
-        """Возвращает версию по фактически сохранённым чанкам портфолио."""
+        """Возвращает версию по фактически сохранённым чанкам коллекции."""
 
         indexed = self.collection.get(include=["metadatas"])
 
@@ -281,7 +285,7 @@ class VectorStore:
         return hashlib.sha256(signature.encode("utf-8")).hexdigest()
 
     def sync_data_directory(self, data_dir: str | Path) -> int:
-        """Индексирует новые и изменённые документы портфолио."""
+        """Индексирует новые и изменённые документы базы знаний."""
 
         data_dir = Path(data_dir)
         if not data_dir.is_dir():
@@ -418,7 +422,7 @@ class VectorStore:
                 self.collection.delete(ids=old_ids)
 
             updated += 1
-            print(f"Обновлён документ портфолио: {source}")
+            print(f"Обновлён документ базы знаний: {source}")
 
         # Удаляем документы, которых больше нет в исходном каталоге.
         current_sources = {
@@ -451,6 +455,7 @@ class VectorStore:
             input=text,
             model=config.EMBEDDING_MODEL
         )
+        embedding_tokens.set(getattr(getattr(response, "usage", None), "total_tokens", None))
         return response.data[0].embedding
     
     def search(self, query: str, top_k: int = config.TOP_K) -> List[Dict[str, Any]]:

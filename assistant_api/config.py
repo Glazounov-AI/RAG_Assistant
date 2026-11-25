@@ -87,3 +87,10 @@ SYSTEM_PROMPT = (
     "Ты - полезный AI ассистент, который отвечает на вопросы "
     "на основе предоставленного контекста."
 )
+
+# External profiles are opt-in and loaded at startup.
+from profiles import load_profiles
+KNOWLEDGE_BASES["support"]["system_prompt"] = SYSTEM_PROMPT
+KNOWLEDGE_BASES["portfolio"]["system_prompt"] = PORTFOLIO_SYSTEM_PROMPT
+if os.getenv("RAG_PROFILES_DIR"):
+    KNOWLEDGE_BASES.update(load_profiles(os.environ["RAG_PROFILES_DIR"], KNOWLEDGE_BASES))

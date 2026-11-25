@@ -6,6 +6,7 @@
 """
 
 import secrets
+from openai import APITimeoutError
 import time
 from contextlib import asynccontextmanager
 
@@ -63,6 +64,8 @@ class QueryResponse(BaseModel):
     answer: str
     from_cache: bool
     model: str
+    retrieved_sources: list[dict] = Field(default_factory=list)
+    usage: dict = Field(default_factory=dict)
 
 
 @asynccontextmanager
@@ -138,6 +141,8 @@ def query(request: QueryRequest, http_request: Request):
     started_at = time.perf_counter()
     try:
         result = pipeline.query(request.query, mode=request.mode)
+    except APITimeoutError:
+        raise HTTPException(status_code=504, detail="Превышено время ожидания LLM") from None
     except Exception:
         raise HTTPException(
             status_code=500,
@@ -150,13 +155,16 @@ def query(request: QueryRequest, http_request: Request):
     if logger is not None:
         try:
             logger.log(
-                query=result["query"],
-                response=result["answer"],
+                query=result["query"] if KNOWLEDGE_BASES[request.mode].get("log_content", True) else "[redacted]",
+                response=result["answer"] if KNOWLEDGE_BASES[request.mode].get("log_content", True) else "[redacted]",
                 from_cache=result["from_cache"],
                 response_time_ms=response_time_ms,
                 source="api",
                 user_id=None,
                 username=None,
+                mode=request.mode,
+                model=result.get("model", pipeline.model),
+                usage=result.get("usage"),
             )
         except Exception as e:
             print(f"⚠️  Не удалось записать лог запроса: {e}")
@@ -166,4 +174,6 @@ def query(request: QueryRequest, http_request: Request):
         answer=result["answer"],
         from_cache=result["from_cache"],
         model=result.get("model", pipeline.model),
+        retrieved_sources=result.get("retrieved_sources", []),
+        usage=result.get("usage", {}),
     )

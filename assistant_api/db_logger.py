@@ -46,6 +46,10 @@ class QueryLogger:
             )
         """)
 
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(logs)")}
+        for name, kind in (("mode", "TEXT"), ("model", "TEXT"), ("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"), ("embedding_tokens", "INTEGER")):
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE logs ADD COLUMN {name} {kind}")
         conn.commit()
         conn.close()
 
@@ -58,6 +62,9 @@ class QueryLogger:
         source: str = "console",
         user_id: Optional[str] = None,
         username: Optional[str] = None,
+        mode: Optional[str] = None,
+        model: Optional[str] = None,
+        usage: dict | None = None,
     ) -> None:
         """
         Сохранение отдельной записи о пользовательском запросе.
@@ -80,9 +87,9 @@ class QueryLogger:
             """
             INSERT INTO logs (
                 timestamp, user_id, username, source, query,
-                response, from_cache, response_time_ms, created_at
+                response, from_cache, response_time_ms, created_at, mode, model, input_tokens, output_tokens, embedding_tokens
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 now,
@@ -93,7 +100,7 @@ class QueryLogger:
                 response,
                 1 if from_cache else 0,
                 response_time_ms,
-                now,
+                now, mode, model, (usage or {}).get("input_tokens"), (usage or {}).get("output_tokens"), (usage or {}).get("embedding_tokens"),
             ),
         )
 
