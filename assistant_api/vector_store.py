@@ -458,7 +458,7 @@ class VectorStore:
         embedding_tokens.set(getattr(getattr(response, "usage", None), "total_tokens", None))
         return response.data[0].embedding
     
-    def search(self, query: str, top_k: int = config.TOP_K) -> List[Dict[str, Any]]:
+    def search(self, query: str, top_k: int = config.TOP_K, *, sources: list[str] | None = None) -> List[Dict[str, Any]]:
         """
         Поиск релевантных документов по запросу.
         
@@ -469,6 +469,13 @@ class VectorStore:
         Returns:
             список документов с метаданными
         """
+        filters = {}
+        if sources is not None:
+            if not sources:
+                raise ValueError("sources must not be empty")
+            filters["where"] = {"source": {"$in": sources}}
+            if not self.collection.get(**filters, limit=1, include=[])["ids"]:
+                return []
         # Создание embedding для запроса
         query_embedding = self._create_embedding(query)
         
@@ -477,6 +484,7 @@ class VectorStore:
             query_embeddings=[query_embedding],
             n_results=top_k,
             include=["documents", "distances", "metadatas"],
+            **filters,
         )
         
         # Форматирование результатов
@@ -486,6 +494,8 @@ class VectorStore:
                 meta = None
                 if results.get('metadatas') and results['metadatas'][0]:
                     meta = results['metadatas'][0][i]
+                if sources is not None and (not meta or meta.get("source") not in sources):
+                    raise RuntimeError("Unexpected source in targeted retrieval")
                 documents.append({
                     'id': results['ids'][0][i],
                     'text': results['documents'][0][i],

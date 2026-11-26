@@ -36,6 +36,18 @@ class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
     mode: str = Field(default=DEFAULT_MODE)
 
+    sources: list[str] | None = Field(default=None, min_length=1, max_length=20)
+
+    @field_validator("sources")
+    @classmethod
+    def validate_sources(cls, value):
+        if value is not None:
+            if any(not x.strip() or x != x.strip() or len(x) > 255 or any(c in x for c in ("/", "\\", "\x00")) or x in (".", "..") for x in value):
+                raise ValueError("Invalid source filename")
+            if len(set(value)) != len(value):
+                raise ValueError("Duplicate sources")
+        return value
+
     @field_validator("query")
     @classmethod
     def validate_query(cls, value: str) -> str:
@@ -152,7 +164,7 @@ def query(request: QueryRequest, http_request: Request):
     # Замер только выполнения pipeline.query()
     started_at = time.perf_counter()
     try:
-        result = pipeline.query(request.query, mode=request.mode)
+        result = pipeline.query(request.query, mode=request.mode, **({"sources": request.sources} if request.sources is not None else {}))
     except APITimeoutError:
         raise HTTPException(status_code=504, detail="Превышено время ожидания LLM") from None
     except Exception:

@@ -166,6 +166,7 @@ class RAGPipeline:
         user_query: str,
         use_cache: bool = True,
         mode: str | None = None,
+        sources: list[str] | None = None,
     ) -> Dict[str, Any]:
         """
         Основной метод для обработки запроса пользователя через API.
@@ -197,12 +198,12 @@ class RAGPipeline:
         vector_store = self.vector_stores[mode]
 
         settings = self.knowledge_bases[mode]
-        if settings.get("catalog"):
+        if sources is None and settings.get("catalog"):
             strategy, args = route(user_query, settings["catalog"])
             if strategy != "semantic":
                 return execute(self.object_registry, mode, user_query, settings["catalog"], strategy, args)
         model = settings.get("model", self.model)
-        use_cache = use_cache and settings.get("cache_enabled", True)
+        use_cache = sources is None and use_cache and settings.get("cache_enabled", True)
         signature = json.dumps(["f2-v1", model, settings.get("system_prompt", config.SYSTEM_PROMPT), settings.get("top_k", config.TOP_K), settings.get("temperature", config.TEMPERATURE), settings.get("max_tokens", config.MAX_TOKENS)], ensure_ascii=False)
         kb_version = vector_store.get_index_version() + ":" + hashlib.sha256(signature.encode()).hexdigest()
         started = time.perf_counter()
@@ -235,7 +236,9 @@ class RAGPipeline:
         
         # Шаг 2: Поиск релевантных документов
         print("[*] Поиск релевантных документов через API...")
-        context_docs = vector_store.search(user_query, top_k=settings.get("top_k", config.TOP_K))
+        context_docs = vector_store.search(user_query, top_k=settings.get("top_k", config.TOP_K), **({"sources": sources} if sources is not None else {}))
+        if sources is not None and not context_docs:
+            return {"query": user_query, "answer": "В указанных источниках информация не найдена.", "from_cache": False, "model": "local-no-context", "retrieved_sources": [], "strategy": "targeted", "usage": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": embedding_tokens.get() or 0}}
         print(f"[+] Найдено {len(context_docs)} релевантных документов")
         
         # Шаг 3: Формирование промпта
@@ -267,6 +270,7 @@ class RAGPipeline:
             "context_docs": context_docs,
             "model": model,
             "mode": "API",
+            "strategy": "targeted" if sources is not None else "semantic",
             "retrieved_sources": self._sources(context_docs),
             "usage": {**(_generation_usage.get() or {}), "embedding_tokens": embedding_tokens.get()},
             "elapsed_ms": (time.perf_counter() - started) * 1000,

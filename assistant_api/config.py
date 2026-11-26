@@ -98,7 +98,7 @@ if os.getenv("RAG_PROFILES_DIR"):
 KNOWLEDGE_BASES["portfolio"]["catalog"] = {"noun": "проектов", "plural": "проекты", "object_type": "project", "strategies": ["semantic", "list", "count", "filter"], "filter_fields": ["category", "technologies"], "page_size": 20}
 
 KNOWLEDGE_BASES["portfolio"]["catalog"]["query_aliases"] = {
-    "count": ["сколько всего проектов"],
+    "count": ["сколько всего проектов", "сколько проектов в портфолио"],
     "list": ["какие проекты есть", "какие есть проекты", "покажи проекты", "перечисли проекты"],
     "filter": {"technologies": ["покажи проекты на", "проекты на", "какие проекты на"]},
     "values": {"technologies": ["Python", "PHP", "COBOL", "Java", "JavaScript", "n8n", "FastAPI", "LoRA", "SQLite", "ChromaDB"]},
