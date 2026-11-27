@@ -1,3 +1,4 @@
+from observability import remaining
 """
 Модуль работы с векторным хранилищем ChromaDB.
 Обрабатывает загрузку документов, chunking и поиск по векторам.
@@ -453,7 +454,8 @@ class VectorStore:
         """
         response = self.openai_client.embeddings.create(
             input=text,
-            model=config.EMBEDDING_MODEL
+            model=config.EMBEDDING_MODEL,
+            timeout=remaining(10.0, reserve=0.25)
         )
         embedding_tokens.set(getattr(getattr(response, "usage", None), "total_tokens", None))
         return response.data[0].embedding

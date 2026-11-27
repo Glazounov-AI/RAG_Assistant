@@ -11,7 +11,9 @@ from generation import generate, serialize_input
 from generation_models import GenerationRequest, GenerationResponse
 from generation_profiles import load_generation_profiles
 from config import GENERATION_PROFILES_DIR, GENERATION_ACCESS_KEY
-from openai import APITimeoutError
+from openai import APITimeoutError, APIConnectionError, APIStatusError
+import asyncio
+from observability import install, stage
 import time
 from contextlib import asynccontextmanager
 
@@ -103,7 +105,18 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("RAG_GENERATION_ACCESS_KEY must be configured")
 
     # Тяжёлая инициализация ( ChromaDB, кеш, индексация ) — один раз
-    app.state.pipeline = RAGPipeline()
+    app.state.pipeline = None
+    app.state.index_state = "initializing"
+    async def initialize():
+        while True:
+            try:
+                app.state.pipeline = await asyncio.to_thread(RAGPipeline)
+                app.state.index_state = "ready"
+                return
+            except Exception as exc:
+                app.state.index_state = "unavailable"
+                print("Index initialization failed:", type(exc).__name__)
+                await asyncio.sleep(30)
     app.state.rate_limiter = RateLimiter() if RATE_LIMIT_ENABLED else None
 
     # Логгер создаётся один раз; ошибка не останавливает API
@@ -114,7 +127,12 @@ async def lifespan(app: FastAPI):
         app.state.logger = None
 
     print("✅ HTTP API готово к работе")
-    yield
+    task = asyncio.create_task(initialize())
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 app = FastAPI(
@@ -122,6 +140,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+install(app, accept_budget=True)
+
+@app.get("/health/ready")
+def readiness():
+    if getattr(app.state, "pipeline", None) is None:
+        raise HTTPException(503, "Knowledge base not ready")
+    return {"status": "ready"}
 
 @app.get("/health")
 def health():
@@ -142,6 +168,8 @@ def query(request: QueryRequest, http_request: Request):
             )
 
     pipeline: RAGPipeline = app.state.pipeline
+    if pipeline is None:
+        raise HTTPException(503, "Knowledge base not ready")
     logger: QueryLogger | None = app.state.logger
 
     limiter = app.state.rate_limiter
@@ -164,9 +192,14 @@ def query(request: QueryRequest, http_request: Request):
     # Замер только выполнения pipeline.query()
     started_at = time.perf_counter()
     try:
-        result = pipeline.query(request.query, mode=request.mode, **({"sources": request.sources} if request.sources is not None else {}))
-    except APITimeoutError:
+        with stage("query"):
+            result = pipeline.query(request.query, mode=request.mode, **({"sources": request.sources} if request.sources is not None else {}))
+    except (APITimeoutError, TimeoutError):
         raise HTTPException(status_code=504, detail="Превышено время ожидания LLM") from None
+    except APIConnectionError:
+        raise HTTPException(503, "Provider unavailable") from None
+    except APIStatusError as exc:
+        raise HTTPException(503 if exc.status_code == 429 or exc.status_code >= 500 else 502, "Provider error") from None
     except Exception:
         raise HTTPException(
             status_code=500,
@@ -222,7 +255,8 @@ def generate_endpoint(request: GenerationRequest, http_request: Request):
     limiter = app.state.rate_limiter
     if limiter is not None and not limiter.check(http_request.client.host if http_request.client else "unknown", "generate:" + profile.profile, profile.rate_limit_per_minute):
         raise HTTPException(429, "Generation rate limit exceeded")
-    result = generate(entry, text)
+    with stage("generate"):
+        result = generate(entry, text)
     logger = app.state.logger
     if logger is not None:
         try:

@@ -1,3 +1,4 @@
+from observability import remaining, stage
 """
 Основной RAG pipeline для API режима.
 Управляет потоком: запрос -> кеш -> vector search -> LLM -> ответ -> кеш.
@@ -154,7 +155,8 @@ class RAGPipeline:
                 {"role": "user", "content": prompt}
             ],
             temperature=settings.get("temperature", config.TEMPERATURE),
-            max_tokens=settings.get("max_tokens", config.MAX_TOKENS)
+            max_tokens=settings.get("max_tokens", config.MAX_TOKENS),
+            timeout=remaining(15.0, reserve=0.25)
         )
         
         usage = getattr(response, "usage", None)
@@ -236,7 +238,8 @@ class RAGPipeline:
         
         # Шаг 2: Поиск релевантных документов
         print("[*] Поиск релевантных документов через API...")
-        context_docs = vector_store.search(user_query, top_k=settings.get("top_k", config.TOP_K), **({"sources": sources} if sources is not None else {}))
+        with stage("retrieval"):
+            context_docs = vector_store.search(user_query, top_k=settings.get("top_k", config.TOP_K), **({"sources": sources} if sources is not None else {}))
         if sources is not None and not context_docs:
             return {"query": user_query, "answer": "В указанных источниках информация не найдена.", "from_cache": False, "model": "local-no-context", "retrieved_sources": [], "strategy": "targeted", "usage": {"input_tokens": 0, "output_tokens": 0, "embedding_tokens": embedding_tokens.get() or 0}}
         print(f"[+] Найдено {len(context_docs)} релевантных документов")
@@ -247,7 +250,8 @@ class RAGPipeline:
         
         # Шаг 4: Генерация ответа через API
         print(f"[*] Генерация ответа через OpenAI API ({model})...")
-        answer = self._generate_answer(prompt, mode=mode)
+        with stage("completion"):
+            answer = self._generate_answer(prompt, mode=mode)
         print("[+] Ответ получен от API")
         
         # Шаг 5: Сохранение в кеш

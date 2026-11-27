@@ -1,6 +1,7 @@
 """Structured generation without retrieval, embeddings or caching."""
 import json
 import time
+from observability import remaining
 
 from jsonschema import Draft202012Validator
 from openai import OpenAI, APITimeoutError, APIConnectionError, APIStatusError
@@ -28,9 +29,9 @@ def generate(entry, text, client=None):
             response_format={'type': 'json_schema', 'json_schema': {'name': profile.profile, 'strict': True, 'schema': schema}},
             temperature=profile.temperature,
             max_completion_tokens=profile.max_tokens,
-            timeout=profile.timeout_seconds,
+            timeout=remaining(profile.timeout_seconds, reserve=0.25),
         )
-    except APITimeoutError:
+    except (APITimeoutError, TimeoutError):
         raise HTTPException(504, 'Generation timed out') from None
     except APIConnectionError:
         raise HTTPException(503, 'Generation provider unavailable') from None
