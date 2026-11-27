@@ -264,3 +264,72 @@ def generate_endpoint(request: GenerationRequest, http_request: Request):
         except Exception:
             print("Generation logging failed")
     return result
+
+
+from retrieval import retrieve as retrieve_chunks
+
+
+class RetrieveRequest(QueryRequest):
+    model_config = {"extra": "forbid"}
+    max_context_chars: int = Field(default=12000, ge=1, le=24000)
+
+
+class RetrievedChunk(BaseModel):
+    id: str | None = None
+    source: str | None = None
+    distance: float | None = None
+    text: str
+
+
+class RetrieveResponse(BaseModel):
+    chunks: list[RetrievedChunk]
+    matched_chunks: int
+    context_chars: int
+    truncated: bool
+    strategy: str
+    usage: dict[str, int | None]
+
+
+@app.post('/retrieve', response_model=RetrieveResponse)
+def retrieve_endpoint(request: RetrieveRequest, http_request: Request):
+    if API_AUTH_ENABLED and not secrets.compare_digest(
+        http_request.headers.get('X-API-Key', '').encode(), API_ACCESS_KEY.encode()
+    ):
+        raise HTTPException(401, 'Invalid API key')
+    # Raw KB text is more sensitive than generated answers. Require an
+    # explicitly configured API key even when legacy /query auth is disabled.
+    if not API_ACCESS_KEY or not secrets.compare_digest(
+        http_request.headers.get('X-API-Key', '').encode(), API_ACCESS_KEY.encode()
+    ):
+        raise HTTPException(403, 'Retrieval access denied')
+    pipeline = app.state.pipeline
+    if pipeline is None:
+        raise HTTPException(503, 'Knowledge base not ready')
+    limiter = app.state.rate_limiter
+    if limiter is not None and not limiter.check(
+        http_request.client.host if http_request.client else 'unknown',
+        request.mode, KNOWLEDGE_BASES[request.mode]['rate_limit_per_minute']
+    ):
+        raise HTTPException(429, 'Rate limit exceeded')
+    started = time.perf_counter()
+    try:
+        result = retrieve_chunks(pipeline, request.query, request.mode,
+                                 request.sources, request.max_context_chars)
+    except (APITimeoutError, TimeoutError):
+        raise HTTPException(504, 'Provider timeout') from None
+    except APIConnectionError:
+        raise HTTPException(503, 'Provider unavailable') from None
+    except APIStatusError as exc:
+        raise HTTPException(503 if exc.status_code == 429 or exc.status_code >= 500 else 502, 'Provider error') from None
+    except Exception:
+        raise HTTPException(500, 'Retrieval failed') from None
+    logger = app.state.logger
+    if logger is not None:
+        try:
+            logger.log(query='[redacted]', response='[redacted]', from_cache=False,
+                       response_time_ms=(time.perf_counter()-started)*1000,
+                       source='retrieve', mode=request.mode, model='retrieval-only',
+                       usage=result['usage'])
+        except Exception:
+            print('Retrieval logging failed')
+    return result

@@ -477,6 +477,7 @@ class VectorStore:
                 raise ValueError("sources must not be empty")
             filters["where"] = {"source": {"$in": sources}}
             if not self.collection.get(**filters, limit=1, include=[])["ids"]:
+                embedding_tokens.set(0)
                 return []
         # Создание embedding для запроса
         query_embedding = self._create_embedding(query)
